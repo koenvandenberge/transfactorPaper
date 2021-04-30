@@ -415,12 +415,16 @@ dfAUCAll$method <- factor(dfAUCAll$method, levels = c("poisson", "poisson_lasso"
                                                       "dirMult", "dirMult_lasso",
                                                       "dirMult_alphaEst", "dirMult_lasso_alphaEst",
                                                       "viper", "AUCell"))
+dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
+dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
 ggplot(dfAUCAll, aes(x=method, y=auc)) +
   geom_boxplot(aes(col=method)) +
   facet_wrap(.~noiseTFs * noiseEdges, 
              ncol = length(nNoiseEdgeGrid), 
              nrow = length(nNoiseTFGrid)) +
-  theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9)) +
-  theme_bw()
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=3)
 ggsave("../plots/aucAllSettings.pdf", width=12)
 ```
