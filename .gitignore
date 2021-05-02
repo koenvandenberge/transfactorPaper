@@ -1,4 +1,5 @@
 simulation/plots*
+simulation/dyngen/datasets*
 .Rproj.user
 .Rhistory
 .RData

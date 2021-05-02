@@ -537,131 +537,144 @@ evaluateSimulation_repressions <- function(counts,
 
 
   ## Poisson model
-  poisRes <- emPoissonThinning_faster(counts = countsPos,
+  poisRes <- transfactor::estimateActivity(counts = countsPos,
                                       X = XPos,
-                                      rho_t = NULL,
+                                      model = "poisson",
                                       U = design,
                                       verbose = verbose,
                                       plot = FALSE,
-                                      nIters = iterMax,
-                                      epsilon=.1)
-  Y_ti_pois <- getCellLevelYt_faster(poisRes$mu_gti, countsPos)
+                                      maxIter = iterMax,
+                                      epsilon=.1,
+                                      sparse = FALSE,
+                                      repressions = FALSE)
+  Y_ti_pois <- transfactor::tfCounts(poisRes$mu_gtc, countsPos, design)
   fTestGamPoi_pois <- glmGamPoiResultsAll(Y_ti_pois, design)
   indTestGamPoi_pois <- glmGamPoiResultsInd(Y_ti_pois, design)
 
   ## Dir-Mult model, known alpha
-  dirMultRes_alphaKnown <- emDirMult_alphaKnown3(counts = countsPos,
+  dirMultRes_alphaKnown <- transfactor::estimateActivity(counts = countsPos,
                                                  X = XPos,
+                                                 model = "dirMult",
                                                  alpha = alphaPos,
-                                                 rho_t = NULL,
                                                  U = design,
                                                  verbose = verbose,
                                                  plot = FALSE,
-                                                 nIters = iterMax,
+                                                 maxIter = iterMax,
                                                  epsilon=.1,
-                                                 alphaScale = alphaScale)
-  Y_ti_dirMult <- getCellLevelYt_faster(dirMultRes_alphaKnown$mu_gti, countsPos)
+                                                 alphaScale = alphaScale,
+                                                 sparse = FALSE,
+                                                 repressions = FALSE)
+  Y_ti_dirMult <- transfactor::tfCounts(dirMultRes_alphaKnown$mu_gtc, countsPos, design)
   fTestGamPoi_dirMult <- glmGamPoiResultsAll(Y_ti_dirMult, design)
   indTestGamPoi_dirMult <- glmGamPoiResultsInd(Y_ti_dirMult, design)
 
   ## Dir-Mult model, estimate alpha
-  dirMultRes_alphaEst <- emDirMult_estAlpha_iterative2(counts = countsPos,
+  dirMultRes_alphaEst <- transfactor::estimateActivity(counts = countsPos,
                                                        X = XPos,
-                                                       rho_t = NULL,
+                                                       model = "dirMultAlpha",
                                                        U = design,
                                                        verbose = verbose,
                                                        plot = FALSE,
-                                                       nIters = iterMax,
-                                                       epsilon=.1)
-  Y_ti_dirMult_alphaEst <- getCellLevelYt_faster(dirMultRes_alphaEst$mu_gti, countsPos)
+                                                       maxIter = iterMax,
+                                                       epsilon=.1,
+                                                       sparse = FALSE,
+                                                       repressions = FALSE)
+  Y_ti_dirMult_alphaEst <- transfactor::tfCounts(dirMultRes_alphaEst$mu_gtc, countsPos, design)
   fTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst, design)
   indTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst, design)
 
   ## Poisson model, lasso
-  poisResLasso <- emPoissonThinning_faster_lassoInit_sufStat(counts = countsPos,
+  poisResLasso <- transfactor::estimateActivity(counts = countsPos,
                                                              X = XPos,
-                                                             rho_t = NULL,
+                                                             model = "poisson",
                                                              U = design,
                                                              verbose = verbose,
                                                              plot = FALSE,
-                                                             nIters = iterMax,
-                                                             epsilon=.1)
-  Y_ti_poisLasso <- getCellLevelYti_faster_sufStats(poisResLasso$mu_gtc, countsPos, design)
+                                                             maxIter = iterMax,
+                                                             epsilon=.1,
+                                                             sparse = TRUE,
+                                                             repressions = FALSE)
+  Y_ti_poisLasso <- transfactor::tfCounts(poisResLasso$mu_gtc, countsPos, design)
   fTestGamPoi_poisLasso <- glmGamPoiResultsAll(Y_ti_poisLasso, design)
   indTestGamPoi_poisLasso <- glmGamPoiResultsInd(Y_ti_poisLasso, design)
 
   ## Dir-Mult model, known alpha, lasso
-  dirMultRes_alphaKnown_lasso <- emDirMultThinning_faster_lassoInit_sufStat(counts = countsPos,
-                                                                            X = XPos,
-                                                                            alpha = alphaPos,
-                                                                            rho_t = NULL,
-                                                                            U = design,
-                                                                            verbose = verbose,
-                                                                            plot = FALSE,
-                                                                            nIters = iterMax,
-                                                                            epsilon=.1,
-                                                                            alphaScale = alphaScale)
-  Y_ti_dirMult_lasso <- getCellLevelYti_faster_sufStats(dirMultRes_alphaKnown_lasso$mu_gtc, countsPos, design)
+  dirMultRes_alphaKnown_lasso <- transfactor::estimateActivity(counts = countsPos,
+                                                               X = XPos,
+                                                               model = "dirMult",
+                                                               alpha = alphaPos,
+                                                               U = design,
+                                                               verbose = verbose,
+                                                               plot = FALSE,
+                                                               maxIter = iterMax,
+                                                               epsilon=.1,
+                                                               alphaScale = alphaScale,
+                                                               sparse = TRUE,
+                                                               repressions = FALSE)
+  Y_ti_dirMult_lasso <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso$mu_gtc, countsPos, design)
   fTestGamPoi_dirMultLasso <- glmGamPoiResultsAll(Y_ti_dirMult_lasso, design)
   indTestGamPoi_dirMultLasso <- glmGamPoiResultsInd(Y_ti_dirMult_lasso, design)
 
   ## Dir-Mult model, estimate alpha, lasso
-  dirMultRes_alphaEst_lasso <- emDirMultThinning_faster_lassoInit_sufStat_repressions_estAlpha3(
-    counts = countsPos,
-    X = XPos,
-    rho_t = NULL,
-    U = design,
-    verbose = verbose,
-    plot = FALSE,
-    nIters = iterMax,
-    epsilon = .1,
-    repressions = FALSE)
-  Y_ti_dirMult_alphaEst_lasso <- getCellLevelYti_faster_sufStats(dirMultRes_alphaEst_lasso$mu_gtc, countsPos, design)
+  dirMultRes_alphaEst_lasso <- transfactor::estimateActivity(counts = countsPos,
+                                                            X = XPos,
+                                                            model = "dirMultAlpha",
+                                                            U = design,
+                                                            verbose = verbose,
+                                                            plot = FALSE,
+                                                            maxIter = iterMax,
+                                                            epsilon = .1,
+                                                            sparse = TRUE,
+                                                            repressions = FALSE)
+  Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(dirMultRes_alphaEst_lasso$mu_gtc, countsPos, design)
   fTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso, design)
   indTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso, design)
 
   ## Poisson model, lasso, repressions
-  poisResLasso_repr <- emPoissonThinning_faster_lassoInit_sufStat_repressions(counts = counts,
-                                                             X = X,
-                                                             rho_t = NULL,
-                                                             U = design,
-                                                             verbose = verbose,
-                                                             plot = FALSE,
-                                                             nIters = iterMax,
-                                                             epsilon=.1,
-                                                             repressions = TRUE)
-  Y_ti_poisLasso_repr <- getCellLevelYti_faster_sufStats(poisResLasso_repr$mu_gtc, counts, design)
+  poisResLasso_repr <- transfactor::estimateActivity(counts = counts,
+                                                     X = X,
+                                                     model = "poisson",
+                                                     U = design,
+                                                     verbose = verbose,
+                                                     plot = FALSE,
+                                                     maxIter = iterMax,
+                                                     epsilon=.1,
+                                                     sparse = TRUE,
+                                                     repressions = TRUE)
+  Y_ti_poisLasso_repr <- transfactor::tfCounts(poisResLasso_repr$mu_gtc, counts, design)
   fTestGamPoi_poisLasso_repr <- glmGamPoiResultsAll(Y_ti_poisLasso_repr, design)
   indTestGamPoi_poisLasso_repr <- glmGamPoiResultsInd(Y_ti_poisLasso_repr, design)
 
   ## Dir-Mult model, known alpha, lasso, repressions
-  dirMultRes_alphaKnown_lasso_repr <- emDirMultThinning_faster_lassoInit_sufStat_repressions(counts = counts,
-                                                                            X = X,
-                                                                            alpha = alpha,
-                                                                            rho_t = NULL,
-                                                                            U = design,
-                                                                            verbose = verbose,
-                                                                            plot = FALSE,
-                                                                            nIters = iterMax,
-                                                                            epsilon=.1,
-                                                                            alphaScale = alphaScale,
-                                                                            repressions = TRUE)
-  Y_ti_dirMultLasso_repr <- getCellLevelYti_faster_sufStats(dirMultRes_alphaKnown_lasso_repr$mu_gtc, counts, design)
+  dirMultRes_alphaKnown_lasso_repr <- transfactor::estimateActivity(counts = counts,
+                                                                    X = X,
+                                                                    model = "dirMult",
+                                                                    alpha = alpha,
+                                                                    rho_t = NULL,
+                                                                    U = design,
+                                                                    verbose = verbose,
+                                                                    plot = FALSE,
+                                                                    maxIter = iterMax,
+                                                                    epsilon=.1,
+                                                                    alphaScale = alphaScale,
+                                                                    sparse = TRUE,
+                                                                    repressions = TRUE)
+  Y_ti_dirMultLasso_repr <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso_repr$mu_gtc, counts, design)
   fTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsAll(Y_ti_dirMultLasso_repr, design)
   indTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsInd(Y_ti_dirMultLasso_repr, design)
 
   ## Dir-Mult model, estimate alpha, lasso, repressions
-  dirMultRes_alphaEst_lasso_repr <- emDirMultThinning_faster_lassoInit_sufStat_repressions_estAlpha3(
-    counts = counts,
-    X = X,
-    rho_t = NULL,
-    U = design,
-    verbose = verbose,
-    plot = FALSE,
-    nIters = iterMax,
-    epsilon = .1,
-    repressions = TRUE)
-  Y_ti_dirMult_alphaEst_lasso_repr <- getCellLevelYti_faster_sufStats(dirMultRes_alphaEst_lasso_repr$mu_gtc, counts, design)
+  dirMultRes_alphaEst_lasso_repr <- transfactor::estimateActivity(counts = counts,
+                                                                  X = X,
+                                                                  model = "dirMultAlpha",
+                                                                  U = design,
+                                                                  verbose = verbose,
+                                                                  plot = FALSE,
+                                                                  maxIter = iterMax,
+                                                                  epsilon = .1,
+                                                                  sparse = TRUE,
+                                                                  repressions = TRUE)
+  Y_ti_dirMult_alphaEst_lasso_repr <- transfactor::tfCounts(dirMultRes_alphaEst_lasso_repr$mu_gtc, counts, design)
   fTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso_repr, design)
   indTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso_repr, design)
 
@@ -684,126 +697,6 @@ evaluateSimulation_repressions <- function(counts,
   resAUCell <- resAUCell[colnames(X),]
   indTestLimma_AUCell <- limmaResultsInd(resAUCell, design)
   fTestLimma_AUCell <- limmaResultsAll(resAUCell, design)
-
-  # ## ROC curves for each cell type
-  # plistInd <- list()
-  # for(kk in 1:(ncol(design)-1)){
-  #   # DE id
-  #   deId <- truth[,kk]
-  #
-  #   # poisson
-  #   ooF <- order(indTestGamPoi_pois[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   df <- data.frame(tpr=tpr,
-  #                    fpr=fpr,
-  #                    method="poisson")
-  #
-  #   # poisson, lasso
-  #   ooF <- order(indTestGamPoi_poisLasso[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="poisson_lasso")
-  #   df <- rbind(df, curDf)
-  #
-  #   # poisson, lasso, repressions
-  #   ooF <- order(indTestGamPoi_poisLasso_repr[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="poisson_lasso_repr")
-  #   df <- rbind(df, curDf)
-  #
-  #
-  #   # dirMult
-  #   ooF <- order(indTestGamPoi_dirMult[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMult")
-  #   df <- rbind(df, curDf)
-  #
-  #   # dirMult, lasso
-  #   ooF <- order(indTestGamPoi_dirMultLasso[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMult_lasso")
-  #   df <- rbind(df, curDf)
-  #
-  #   # dirMult, lasso, repressions
-  #   ooF <- order(indTestGamPoi_dirMultLasso_repr[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMult_lasso_repr")
-  #   df <- rbind(df, curDf)
-  #
-  #   # dirMult, est alpha
-  #   ooF <- order(indTestGamPoi_dirMult_alphaEst[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMultEstAlpha")
-  #   df <- rbind(df, curDf)
-  #
-  #   # dirMult, est alpha, lasso
-  #   ooF <- order(indTestGamPoi_dirMult_alphaEst_lasso[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMultEstAlpha_lasso")
-  #   df <- rbind(df, curDf)
-  #
-  #   # dirMult, est alpha, lasso, repressions
-  #   ooF <- order(indTestGamPoi_dirMult_alphaEst_lasso_repr[[kk]]$f_statistic, decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooF]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooF]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="dirMultEstAlpha_lasso_repr")
-  #   df <- rbind(df, curDf)
-  #
-  #
-  #   # viper
-  #   ooVip <- order(abs(indTestLimma_viper[[kk]]$t), decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooVip]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooVip]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="viper")
-  #   df <- rbind(df, curDf)
-  #
-  #   # AUCell
-  #   ooAUC <- order(abs(indTestLimma_AUCell[[kk]]$t), decreasing = TRUE)
-  #   tpr <- cumsum(deId[ooAUC]) / sum(deId)
-  #   fpr <- cumsum(!deId[ooAUC]) / sum(!deId)
-  #   curDf <- data.frame(tpr=tpr,
-  #                       fpr=fpr,
-  #                       method="AUCell")
-  #   df <- rbind(df, curDf)
-  #
-  #   df$ct <- kk
-  #
-  #   if(kk == 1){
-  #     dfIndAll <- df
-  #   } else {
-  #     dfIndAll <- rbind(dfIndAll, df)
-  #   }
-  #
-  #   plistInd[[kk]] <- ggplot(df, aes(x=fpr, y=tpr, gorup=method, col=method)) +
-  #     geom_path() +
-  #     theme_classic()
-  # }
-
 
   ## ROC curves across all cell types
   deId <- truth[,1]
