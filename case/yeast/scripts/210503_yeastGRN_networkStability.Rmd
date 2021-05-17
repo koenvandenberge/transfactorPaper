@@ -1,0 +1,241 @@
+---
+title: "Yeast scRNA-seq TF KO"
+author: "Koen Van den Berge"
+date: "9/21/2020"
+output: html_document
+---
+
+```{r}
+library(irlba)
+library(uwot)
+library(ggplot2)
+library(transfactor)
+
+# data and metadata
+data <- read.table("../data/103118_SS_Data.tsv.gz")
+condition <- data$Condition
+condition <- as.character(condition)
+condition[condition == "AmmoniumSulfate"] <- "NLIM_NH4"
+condition[condition == "Glutamine"] <- "NLIM_GLN"
+condition[condition == "MinimalEtOH"] <- "MIN_EtOH"
+condition[condition == "MinimalGlucose"] <- "MIN_Gluc"
+condition[condition == "Proline"] <- "NLIM_PRO"
+condition[condition == "Urea"] <- "NLIM_UREA"
+condition <- factor(condition)
+genotype <- factor(data$Genotype_Group)
+replicate <- data$Replicate
+metaColNames <- c("Condition", "Genotype", "Genotype_Group", "tenXBarcode", "Replicate")
+counts <- t(as.matrix(data[,!colnames(data) %in% metaColNames]))
+
+# gene regulatory network
+network <- read.table("../data/signed_network.tsv", header=TRUE)
+rownames(network) <- network$target
+X <- as.matrix(network[,-1])
+
+mapID <- read.table("../data/yeast_gene_names.tsv", sep="\t", header=TRUE)
+```
+
+# Diauxic shift TFs
+
+```{r}
+paperTFs <- c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1")
+all(paperTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+paperTFGRN <- tfGRN[tfGRN$name %in% paperTFs,]
+rownames(paperTFGRN) <- paperTFGRN$name
+paperTFGRN <- paperTFGRN[paperTFs,]
+paperTFGRN$type <- c(rep("up", 7), rep("down", 2))
+all(paperTFs %in% tfGRN$name)
+```
+
+# Nitrogen metabolism
+
+```{r}
+nitroTFs <- c("GAT1", "GLN3", "RTG1", "RTG3")
+all(nitroTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+nitroTFGRN <- tfGRN[tfGRN$name %in% nitroTFs,]
+rownames(nitroTFGRN) <- nitroTFGRN$name
+nitroTFGRN <- nitroTFGRN[nitroTFs,]
+all(nitroTFs %in% nitroTFGRN$name)
+```
+
+
+
+# Stability using bootstrapping in GRN estimation
+
+```{r}
+confidenceDf <- read.csv("../data/output_inferelator_bbsr/networkResult.csv",
+                          header = TRUE)
+confidenceDfSub <- confidenceDf[confidenceDf$regulator %in% colnames(X) &
+                                  confidenceDf$target %in% rownames(X),]
+alpha <- X
+alpha[alpha != 0] <- min(confidenceDfSub$combined_confidences)
+alpha[cbind(confidenceDfSub$target, confidenceDfSub$regulator)] <- confidenceDfSub$combined_confidences
+hist(alpha[!alpha==0])
+```
+
+
+```{r}
+genoCond <- factor(paste0(as.character(genotype),",",as.character(condition)))
+nlevels(genoCond)
+design <- model.matrix(~ -1 + genoCond)
+```
+
+```{r, eval=FALSE}
+emDirMultRes <- transfactor::estimateActivity(counts = counts,
+                              X = X,
+                              model = "dirMult",
+                              U = design,
+                              alpha = alpha * 100,
+                              alphaScale = 1,
+                              plot = TRUE,
+                              verbose = TRUE,
+                              maxIter = 1000,
+                              epsilon = 1,
+                              sparse = FALSE,
+                              repressions = TRUE)
+saveRDS(emDirMultRes, file="../data/emDirMultRes_repressions.rds")
+```
+
+# Heatmap of TF activity using confidence scores
+
+```{r}
+emDirMultRes <- readRDS("../data/emDirMultRes_repressions.rds")
+library(pheatmap)
+library(RColorBrewer)
+mu_tc <- emDirMultRes$mu_tc
+colnames(mu_tc) <- colnames(design)
+conditionDesign <- factor(unlist(lapply(strsplit(colnames(design), split=","), "[[", 2)))
+annoCol <- data.frame(condition=conditionDesign)
+rownames(annoCol) <- colnames(mu_tc)
+mu_tc_scaled <- t(scale(t(mu_tc)))
+sum(is.na(mu_tc_scaled))
+mu_tc_scaled[is.na(mu_tc_scaled)] <- 0
+color <- colorRampPalette(rev(brewer.pal(n = 7, name =
+  "RdYlBu")))(100)
+hist(mu_tc_scaled)
+breaks <- seq(-2, 4, length=100)
+breaks <- c(breaks, 12)
+phDirMult <- pheatmap(mu_tc_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method = "ward.D2")
+
+mclust::adjustedRandIndex(cutree(phDirMult$tree_col, k=nlevels(condition)), conditionDesign)
+# for clustering methods:
+# complete: 0.6415016
+# single: 0.1916375
+# average: 0.5905749
+```
+
+
+# Diauxic shift: glycolysis and ethanol metabolism
+
+In this condition, glycolysis should be down and ethanol up.
+
+Glycolysis genes downloaded from https://pathway.yeastgenome.org/YEAST/pathway-genes?object=GLYCOLYSIS. However, none of these are TFs. Approximating the analysis by selecting TFs that regulate these genes is not interesting, and also too far of a conceptual leap.
+
+
+```{r}
+### paper https://www.mcponline.org/action/showPdf?pii=S1535-9476%2820%2932651-7
+# induced TFs: HAP2/3/4, CAT8, BAS1, MSN2/4, FHL1, RAP1.
+paperTFs <- c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1")
+all(paperTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+paperTFGRN <- tfGRN[tfGRN$name %in% paperTFs,]
+rownames(paperTFGRN) <- paperTFGRN$name
+paperTFGRN <- paperTFGRN[paperTFs,]
+paperTFGRN$type <- c(rep("up", 7), rep("down", 2))
+all(paperTFs %in% tfGRN$name)
+
+# late-induced proteins: HAP2/3/4, CAT8: Limited activity for HAPs, high for CAT8.
+# early-induced proteins: BAS1, MSN2, MSN4: Only for MSN4 evidence.
+# FHL1 and RAP1 are repressed after a while and we find no activity of these.
+
+diauxicColumns <- grep(x = colnames(design),
+                       pattern = "YPDDiauxic")
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+pListDiaux <- list()
+for(kk in 1:nrow(paperTFGRN)){
+  curTF <- paperTFGRN$sys[kk]
+  ypd <- emDirMultRes$mu_tc[curTF,ypdColumns]
+  diaux <- emDirMultRes$mu_tc[curTF,diauxicColumns]
+  df <- data.frame(activity = c(ypd, diaux),
+                   condition = factor(rep(c("YPD", "Diaux"), each=length(ypd), levels=c("YPD", "Diaux"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 2)))
+  p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(paste0(paperTFGRN$name[kk], " (",paperTFGRN$type[kk],")")) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF activity", 
+                       breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                       labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+    scale_x_discrete(limits=c("YPD", "Diaux"))
+  #print(p)
+  pListDiaux[[kk]] <- p
+}
+pDiaux <- cowplot::plot_grid(plotlist = pListDiaux)
+```
+
+
+
+# Nitrogen limitation and the TOR signaling pathway
+
+```{r}
+## line plots
+nitroTFs <- c("GAT1", "GLN3", "RTG1", "RTG3")
+all(nitroTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+nitroTFGRN <- tfGRN[tfGRN$name %in% nitroTFs,]
+rownames(nitroTFGRN) <- nitroTFGRN$name
+nitroTFGRN <- nitroTFGRN[nitroTFs,]
+all(nitroTFs %in% nitroTFGRN$name)
+
+
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+nitroColumns <- grep(x = colnames(design),
+                       pattern = "NLIM_")
+pListNitro <- list()
+for(kk in 1:nrow(nitroTFGRN)){
+  curTF <- nitroTFGRN$sys[kk]
+  ypd <- emDirMultRes$mu_tc[curTF,ypdColumns]
+  nitro <- emDirMultRes$mu_tc[curTF,nitroColumns]
+  df <- data.frame(activity = c(ypd, nitro),
+                   condition = factor(rep(c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"), each=length(ypd), levels=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 5)))
+  p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(nitroTFGRN$name[kk]) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF activity", 
+                       breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                       labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+    scale_x_discrete(limits=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA")) +
+    theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9))
+  #print(p)
+  pListNitro[[kk]] <- p
+}
+pNitro <- cowplot::plot_grid(plotlist = pListNitro)
+
+```
+
+
+```{r}
+cowplot::plot_grid(pDiaux, pNitro, labels=letters[1:2])
+ggsave("../plots/nitroDiauxDirMult.pdf", width= 11, height=6)
+```
+
+

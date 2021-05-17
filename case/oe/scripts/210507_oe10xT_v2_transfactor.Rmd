@@ -1,0 +1,927 @@
+---
+title: "OE TF activity"
+author: "Koen Van den Berge"
+date: "12/8/2020"
+output: html_document
+---
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(slingshot)
+  library(SingleCellExperiment)
+  library(ggplot2)
+})
+library(transfactor)
+
+```
+
+# Import and process data
+
+```{r}
+dataDir <- "~/Dropbox/research/brainStat/hbcRegenGithub/data/"
+sds <- readRDS(paste0(dataDir, "finalTrajectory/sling.rds"))
+counts <- readRDS(paste0(dataDir, "finalTrajectory/counts_noResp_noMV.rds"))
+counts <- round(counts)
+countsAll <- counts
+# sce <- readRDS(paste0(dataDir, "finalTrajectory/sce_tradeSeq20200904.rds"))
+load(paste0(dataDir, "/ALL_TF.Rda"))
+tf <- intersect(ALL_TF, rownames(counts))
+clDatta <- readRDS(paste0(dataDir, "finalTrajectory/dattaCl_noResp_noMV.rds"))
+```
+
+## Get neuronal cells
+
+```{r}
+## get neuronal cells
+RNGversion("3.5.0")
+set.seed(11)
+cw <- slingCurveWeights(sds)
+pt <- slingPseudotime(sds, na=FALSE)
+wSamp <- tradeSeq:::.assignCells(cw)
+neurCells <- which(wSamp[,1] == 1)
+pt1 <- pt[neurCells, 1]
+oot1 <- order(pt1, decreasing=FALSE)
+pt1Groups <- Hmisc::cut2(pt1, g=20)
+U <- model.matrix(~ -1 + pt1Groups)
+ct1 <- clDatta[neurCells][oot1]
+cellTypeBinCounts <- sapply(levels(pt1Groups), function(gg){
+      table(ct1[which(pt1Groups == gg)]) 
+})
+majorCellTypeBin <- factor(c(rep("HBC*", 5), rep("GBC", 3),
+                      rep("iOSN", 10), rep("mOSN", 2)),
+                      levels = c("HBC*", "GBC", "iOSN", "mOSN"))
+
+counts <- counts[,neurCells][,oot1]
+```
+
+## Load SCENIC estimated GRN
+
+### Convert pySCENIC GRN
+
+```{r}
+# set anaconda in path
+Sys.setenv(PATH=paste0('/Users/koenvandenberge/opt/anaconda3/bin:', Sys.getenv('PATH')))
+
+# use anaconda env in reticulate
+library(reticulate)
+#use_condaenv("r-reticulate")
+
+#p1 <- "/Users/koenvandenberge/opt/anaconda3/bin/python3"
+p2 <- "/Library/Frameworks/Python.framework/Versions/3.8/bin/python3.8"
+#p3 <- "/Users/koenvandenberge/opt/anaconda3/bin/python3"
+
+reticulate::use_python(p2)
+```
+
+```{python}
+import pickle
+import pandas as pd
+file="/Users/koenvandenberge/Dropbox/research/GRN/evaluateGRN/oe10x/pySCENIC_results/output2_prune.dat"
+with open(file, "rb") as f:
+    regulons = pickle.load(f)
+
+dfList = list()
+tfNames = list()
+for ii in range(len(regulons)):
+    tf = regulons[ii].name
+    tfNames.append(tf)
+    geneWeights = regulons[ii].gene2weight
+    df = pd.DataFrame.from_dict(geneWeights, orient='index')
+    dfList.append(df)
+
+
+```
+
+
+```{r}
+tfNames <- py$tfNames
+tfNames <- gsub(x=tfNames, pattern="(+)", fixed=TRUE, replacement="")
+targetList <- py$dfList
+names(targetList) <- tfNames
+
+allTargetGenes <- unique(unlist(Reduce(c, lapply(targetList, rownames))))
+length(allTargetGenes)
+tfRep <- unlist(mapply(rep, tfNames, unlist(lapply(targetList, nrow))))
+targetRep <- unlist(lapply(targetList, rownames))
+strengths <- unlist(lapply(targetList, function(x) x[,1]))
+
+alpha <- matrix(0, nrow = length(allTargetGenes), ncol=length(tfNames),
+            dimnames = list(allTargetGenes, tfNames))
+alpha[cbind(targetRep, tfRep)] <- strengths
+X <- alpha
+X[X != 0] <- 1
+
+## filter counts
+counts <- counts[rownames(counts) %in% rownames(X),]
+
+par(mfrow=c(1,2))
+barplot(table(rowSums(X)), main="By how many TFs is a gene regulated?")
+barplot(table(colSums(X)), main="How many genes is a TF regulating?")
+
+```
+
+# Poisson lasso 
+
+```{r, eval=FALSE}
+poisLassoRes <- transfactor::estimateActivity(counts=as.matrix(counts),
+                                              X=X, 
+                                              model="poisson",
+                                              U=U,
+                                              maxIter=1500, 
+                                              plot=TRUE, 
+                                              verbose=TRUE,
+                                              epsilon=1/2,
+                                              sparse=TRUE,
+                                              repressions=FALSE)
+date <- Sys.Date()
+saveRDS(poisLassoRes, file=paste0("../data/poisLassoRes_", date,".rds"))
+```
+
+```{r}
+poisLassoRes <- readRDS("../data/poisLassoRes_2021-05-07.rds")
+Y_ti_poisson <- transfactor::tfCounts(poisLassoRes$mu_gtc, as.matrix(counts), U)
+```
+
+
+# TF activity heatmaps
+
+TODO: Difference between using `Y_tc` and `mu_tc`?
+
+```{r, eval=TRUE}
+Y_tc_poisson <- Y_ti_poisson %*% U
+library(pheatmap)
+Yhat_tc_poisson <- Y_tc_poisson %*% diag(1/colSums(U))
+colnames(Yhat_tc_poisson) <- colnames(U)
+ooVar <- order(rowVars(Yhat_tc_poisson), decreasing=TRUE)
+pheatmap(t(scale(t(Yhat_tc_poisson[ooVar[1:20],]))), cluster_cols = FALSE)
+pdf("../plots/highVarTF_poissonLasso.pdf")
+pheatmap(t(scale(t(Yhat_tc_poisson[ooVar[1:20],]))), cluster_cols = FALSE)
+dev.off()
+
+Yhat_tc_poisson <- Yhat_tc_poisson[rowSums(Yhat_tc_poisson) > 0,]
+yhatScaled <- t(scale(t(Yhat_tc_poisson)))
+
+
+pheatmap(yhatScaled, cluster_cols = FALSE, show_colnames = FALSE)
+pdf("../plots/allTF_poissonLasso.pdf", height=18)
+pheatmap(yhatScaled, cluster_cols = FALSE, 
+         show_colnames = FALSE, show_rownames = TRUE,
+         border_color = NA)
+dev.off()
+
+pdf("../plots/allTF_poissonLasso_noNames.pdf", height=10)
+pheatmap(yhatScaled, cluster_cols = FALSE, 
+         show_colnames = FALSE, show_rownames = FALSE,
+         border_color = NA)
+dev.off()
+
+
+ph <- pheatmap(yhatScaled, cluster_cols = FALSE, 
+           show_colnames = FALSE, show_rownames = FALSE,
+           border_color = NA)
+cl <- cutree(ph$tree_row, k = 3)
+
+anro <- data.frame(cluster=factor(cl))
+rownames(anro) <- ph$tree_row$labels
+ancol <- data.frame(cellType=majorCellTypeBin)
+rownames(ancol) <- colnames(yhatScaled)
+pdf("../plots/allTF_poissonLasso_noNames_annotated.pdf", height=10)
+pheatmap(yhatScaled, cluster_cols = FALSE, 
+         show_colnames = FALSE, show_rownames = FALSE,
+         border_color = NA, annotation_row = anro,
+         annotation_names_row = TRUE, annotation_legend = TRUE,
+         annotation_col = ancol)
+dev.off()
+
+```
+
+
+## Grouping of TFs according to heatmap and GO enrichment
+
+```{r}
+# Gene enrichment on TFs doesn't provide any results.
+write.table(colnames(X), file="../data/tfUniverseOE10X.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+# cl 1 is HBC
+write.table(names(cl)[cl==1], file="../data/tfCl1_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+# neur
+write.table(names(cl)[cl==2], file="../data/tfCl2_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+# GBC
+write.table(names(cl)[cl==3], file="../data/tfCl3_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+# Gene enrichment on genes regulated by the TFs
+getPi_gtc_sufStats <- function(mu_gtc, counts, pt=NULL, qSteps=0.01, U=NULL){
+  require(fastmatch)
+  if(!is.null(U)){
+    glm <- TRUE
+    gam <- FALSE
+  }
+  if(!is.null(pt)){
+    glm <- FALSE
+    gam <- TRUE
+  }
+   if(!is.null(pt)){
+    ptGroups <- Hmisc::cut2(pt, cuts = quantile(pt, prob=seq(0,1,by=qSteps)))
+    Xpt <- model.matrix(~0+ptGroups)
+    design <- Xpt
+   }
+  
+  if(glm){
+    lvl <- unlist(apply(U,1, function(row){
+      which(row == 1)
+    }))
+    design <- U
+  }
+  
+  tfRows <- unlist(lapply(strsplit(rownames(mu_gtc), split=";"), "[[", 1))
+  geneRows <- unlist(lapply(strsplit(rownames(mu_gtc), split=";"), "[[", 2))
+  tfUniq <- unique(tfRows)
+  geneUniq <- unique(geneRows)
+  rn <- rownames(mu_gtc)
+  pi_gtc <- list()
+  for(gg in 1:length(geneUniq)){
+    curGene <- geneUniq[gg]
+    id <- which(geneRows == curGene)
+    curTFs <- tfRows[id]
+    rowSel <- fastmatch::fmatch(paste0(curTFs,";",curGene), rn)
+    curMu <- mu_gtc[rowSel,,drop=FALSE]
+    curProbs <- sweep(curMu, 2, colSums(curMu)+1e-10, "/")
+    pi_gtc[[gg]] <- curProbs
+  }
+  names(pi_gtc) <- geneUniq
+  return(pi_gtc)
+}
+pi_gtc <- getPi_gtc_sufStats(mu_gtc = poisLassoRes$mu_gtc, 
+                             counts = as.matrix(counts), 
+                             pt = NULL, 
+                             qSteps = NULL, 
+                             U = U)
+pi_gtc <- do.call(rbind, pi_gtc)
+
+getGenesAssociatedWithTF <- function(tf, pi_gtc, X){
+  # get all genes regulated by that TF
+  genes <- names(which(X[,tf] == 1))
+  geneListTF <- c()
+  # for each gene check if that TF has the major contribution
+  for(gg in 1:length(genes)){
+    curPi <- pi_gtc[grep(x=rownames(pi_gtc), paste0(";",genes[gg],"$")),,drop=FALSE]
+    if(all(curPi == 0)) next
+    maxTF <- apply(curPi,2, function(bin){
+      if(all(bin == 0)) return(NA)
+      which.max(bin)
+    })
+    if(paste0(tf,";",genes[gg]) %in% rownames(curPi)[maxTF]){
+      geneListTF <- c(geneListTF, genes[gg])
+    }
+  }
+  return(geneListTF)
+}
+
+tf1 <- names(cl[cl == 1])
+tf2 <- names(cl[cl == 2])
+tf3 <- names(cl[cl == 3])
+genesCluster1 <- unique(unlist(sapply(tf1, function(x){
+  getGenesAssociatedWithTF(tf=x, pi_gtc=pi_gtc, X=X)
+})))
+genesCluster2 <- unique(unlist(sapply(tf2, function(x){
+  getGenesAssociatedWithTF(tf=x, pi_gtc=pi_gtc, X=X)
+})))
+genesCluster3 <- unique(unlist(sapply(tf3, function(x){
+  getGenesAssociatedWithTF(tf=x, pi_gtc=pi_gtc, X=X)
+})))
+
+write.table(rownames(counts), file="../data/genesAll.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+write.table(genesCluster1, file="../data/genesCl1_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+write.table(genesCluster2, file="../data/genesCl2_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+write.table(genesCluster3, file="../data/genesCl3_oe10x.txt",
+            row.names=FALSE, col.names=FALSE, quote=FALSE)
+
+## results for BP
+bpHBC <- read.csv("../data/gProfiler_HBC.csv")
+bpGBC <- read.csv("../data/gProfiler_GBC.csv")
+bpNeur <- read.csv("../data/gProfiler_neuronal.csv")
+
+# xtable::xtable(bpHBC[1:20,2,drop=FALSE])
+# xtable::xtable(bpGBC[1:20,2,drop=FALSE])
+# xtable::xtable(bpNeur[1:20,2,drop=FALSE])
+```
+
+Note that an archived version of gProfiler is used as some GO annotations were missing in Ensembl 103, so we are using Ensembl 102. This version can be accessed using https://biit.cs.ut.ee/gprofiler_archive3/e102_eg49_p15/gost.
+
+Results for cluster 1 (HBC TFs): https://biit.cs.ut.ee/gplink/l/MYQUL6K8Sb
+Results for cluster 2 (neuronal TFs): https://biit.cs.ut.ee/gplink/l/UYOKvLKVSe
+Results for cluster 3 (GBC TFs): https://biit.cs.ut.ee/gplink/l/P1Ea9pBuTb
+
+# Compare DE of genes and TFs
+
+```{r}
+library(slingshot)
+library(tradeSeq)
+pcCounts <- scater::calculatePCA(x = log1p(counts),
+                               ncomponents = 10,
+                               ntop = 1e3)
+umapCounts <- uwot::umap(pcCounts, min_dist = 0.8)
+
+dfUMAPCounts <- data.frame(UMAP1=umapCounts[,1],
+                           UMAP2=umapCounts[,2],
+                           cellType=droplevels(ct1))
+set.seed(3)
+cl <- kmeans(as.matrix(dfUMAPCounts[,1:2]), centers=4)
+plot(as.matrix(dfUMAPCounts[,1:2]), pch=16, col= cl$cluster)
+lin <- getLineages(data = as.matrix(dfUMAPCounts[,1:2]),
+                clusterLabels = cl$cluster,
+                start.clus = 3,
+                end.clus = 2)
+plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; slingshot:::lines.SlingshotDataSet(as.SlingshotDataSet(lin), col="black", lwd=2)
+sds <- getCurves(lin, extend = 'n')
+plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; slingshot:::lines.SlingshotDataSet(as.SlingshotDataSet(sds), col="black", lwd=2)
+
+# sceGAMGene <- fitGAM(counts = as.matrix(counts),
+#               sds = sds,
+#               nknots = 5)
+# saveRDS(sceGAMGene, file="../data/sceGAMGene.rds")
+sceGAMGene <- readRDS("../data/sceGAMGene.rds")
+
+# sceGAMTF <- fitGAM(counts = Y_ti_poisson,
+#               sds = sds,
+#               nknots = 5)
+# saveRDS(sceGAMTF, file="../data/sceGAMTF.rds")
+sceGAMTF <- readRDS("../data/sceGAMTF.rds")
+
+resGene <- associationTest(sceGAMGene)
+resTF <- associationTest(sceGAMTF)
+
+sum(p.adjust(resGene$pvalue, "fdr") <= 0.05, na.rm=TRUE) # 7345
+sum(p.adjust(resTF$pvalue, "fdr") <= 0.05, na.rm=TRUE) # 216
+
+resGene_fc <- associationTest(sceGAMGene, l2fc = log2(2))
+resTF_fc <- associationTest(sceGAMTF, l2fc = log2(2))
+
+sum(p.adjust(resGene_fc$pvalue, "fdr") <= 0.05, na.rm=TRUE) # 5888
+sum(p.adjust(resTF_fc$pvalue, "fdr") <= 0.05, na.rm=TRUE) # 144
+
+```
+
+# Distance-based ranking
+
+```{r}
+tfDist_euclidConsec <- transfactor::tfDistance(activity = poisLassoRes,
+                                               X = X,
+                                               counts = counts,
+                                               U = U,
+                                               scaleDistance = FALSE,
+                                               contrast = "consecutive")
+
+tfDist_euclidConsecScaled <- transfactor::tfDistance(activity = poisLassoRes,
+                                               X = X,
+                                               counts = counts,
+                                               U = U,
+                                               scaleDistance = TRUE,
+                                               contrast = "consecutive")
+
+tfDist_l1Consec <- transfactor::tfDistance(activity = poisLassoRes,
+                                     X = X,
+                                     counts = counts,
+                                     U = U,
+                                     distance = "L1",
+                                     contrast = "consecutive",
+                                     scaleDistance = FALSE)
+
+tfDist_l1ConsecScaled <- transfactor::tfDistance(activity = poisLassoRes,
+                                          X = X,
+                                          counts = counts,
+                                          U = U,
+                                          distance = "L1",
+                                          contrast = "consecutive",
+                                          scaleDistance = TRUE)
+
+# Euclidean vs L1 unscaled distance: top rank is quite different.
+plot(tfDist_euclidConsec+1, tfDist_l1Consec+1, log="xy")
+# Euclidean vs L1 scaled distance
+par(mfrow=c(1,2))
+par(bty='l')
+plot(tfDist_euclidConsecScaled+1, tfDist_l1ConsecScaled+1, log="xy",
+     xlab = "Euclidean scaled distance",
+     ylab = "L1 scaled distance")
+## MD plot
+par(bty='l')
+plot(x = rowMeans(cbind(scale(tfDist_euclidConsecScaled), scale(tfDist_l1ConsecScaled))),
+     y = scale(tfDist_euclidConsecScaled) - scale(tfDist_l1ConsecScaled),
+     xlab = "Average normalized distance",
+     ylab = "Difference in normalized distance",
+     main = "Euclidean versus L1 distance")
+abline(h=0, lty=2, col="red")
+# Euclidean scaled vs unscaled
+plot(tfDist_euclidConsecScaled+1, tfDist_euclidConsec+1, log="xy")
+# L1 scaled vs unscaled
+plot(tfDist_l1ConsecScaled+1, tfDist_l1Consec+1, log="xy")
+
+# plot top TFs for scaled Euclidean
+pi_ti_poisson <- sweep(Y_ti_poisson,2,colSums(Y_ti_poisson),"/")
+head(sort(tfDist_euclidConsecScaled, decreasing=TRUE), 20)
+rafalib::mypar(mfrow=c(3,3))
+for(tt in 1:9){
+  boxplot(pi_ti_poisson[names(tfDist_euclidConsecScaled)[order(tfDist_euclidConsecScaled, decreasing=TRUE)[tt]], ] ~ pt1Groups, las=2,
+          main=paste0(names(tfDist_euclidConsecScaled)[order(tfDist_euclidConsecScaled, decreasing=TRUE)[tt]]," activity"),
+          ylab="Contribution to cell gene expression",
+          xaxt = "n")
+}
+## of all distances, how much do they explain? 42%
+ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
+sum(tfDist_euclidConsecScaled[ooEuclidScaled[1:9]]) / sum(tfDist_euclidConsecScaled)
+
+# plot top TFs for scaled L1
+head(sort(tfDist_l1ConsecScaled, decreasing=TRUE), 20)
+rafalib::mypar(mfrow=c(3,3))
+for(tt in 1:9){
+  boxplot(pi_ti_poisson[names(tfDist_l1ConsecScaled)[order(tfDist_l1ConsecScaled, decreasing=TRUE)[tt]], ] ~ pt1Groups, las=2,
+          main=paste0(names(tfDist_l1ConsecScaled)[order(tfDist_l1ConsecScaled, decreasing=TRUE)[tt]]," activity"),
+          ylab="Contribution to cell gene expression",
+          xaxt = "n")
+}
+
+```
+
+HDAC known to be very important: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4122610/
+Egr1 and FOS upregulation upon injury in epithelium: https://journals.physiology.org/doi/full/10.1152/ajpgi.1999.276.2.G322
+FOS essential for other epithelia e.g. corneal epithelium https://pubmed.ncbi.nlm.nih.gov/18369693/
+FOS is upregulated when basal cells in airway epithelium is perturbed: https://www.biorxiv.org/content/10.1101/451807v1.full.pdf
+EZH2 protein activity shown to be highest in GBC in this paper: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6209616/
+Atf3 specifically expressed upon injury: https://iovs.arvojournals.org/article.aspx?articleid=2162580
+Sox11 is essential for neurogenesis: https://anatomypubs.onlinelibrary.wiley.com/doi/full/10.1002/dvdy.23962
+
+```{r}
+# GO enrichment based on TF distance
+library(msigdbr)
+library(fgsea)
+geneSets <- msigdbr(species = "Mus musculus", category = "C5", subcategory = "BP")
+### filter background to only include genes that we assessed.
+#geneSets$gene_symbol <- toupper(geneSets$gene_symbol)
+geneSets <- geneSets[geneSets$gene_symbol %in% tf,]
+m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
+#stats <- assocRes$waldStat_lineage1_conditionMock
+stats <- tfDist_l1ConsecScaled
+eaRes <- fgsea(pathways = m_list, stats = stats, nperm = 5e4, minSize = 10)
+eaRes[order(eaRes$NES, decreasing=TRUE),]
+```
+
+# Compare TF activity, TF distance and TF expression
+
+## TF expression DE vs TF distance.
+
+```{r}
+library(glmGamPoi)
+countsTF <- countsAll[colnames(X), ][,neurCells][,oot1]
+fit <- glm_gp(countsTF, U)
+L <- matrix(0, nrow=ncol(fit$Beta), ncol=19)
+rownames(L) <- colnames(fit$Beta)
+L[cbind(2:20, 1:19)] <- 1
+L[cbind(1:19, 1:19)] <- -1
+deRes <- test_de(fit, contrast=L)
+
+# correlation with f test statistic
+plot(x = tfDist_euclidConsecScaled[deRes$name] + 1,
+     y = deRes$f_statistic + 1,
+     log = "xy",
+     xlab="TF Distance", ylab="F-test statistic")
+
+```
+
+## TF activity DE vs TF distance.
+
+
+```{r}
+library(glmGamPoi)
+fit_Yti <- glm_gp(Y_ti_poisson, U)
+L <- matrix(0, nrow=ncol(fit_Yti$Beta), ncol=19)
+rownames(L) <- colnames(fit_Yti$Beta)
+L[cbind(2:20, 1:19)] <- 1
+L[cbind(1:19, 1:19)] <- -1
+deRes_Yti <- test_de(fit_Yti, contrast=L)
+
+# correlation with f test statistic
+plot(x = tfDist_euclidConsecScaled[deRes_Yti$name] + 1,
+     y = deRes_Yti$f_statistic + 1,
+     log = "xy",
+     xlab="TF Distance", ylab="F-test statistic")
+```
+
+
+# Compare with viper and AUCell using dimensionality reduction
+
+## viper
+
+```{r}
+alpha <- X
+constructViperRegulon <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  regulon <- dorothea:::df2regulon(dfReg)
+  return(regulon)
+}
+viperRegulon <- constructViperRegulon(X, alpha)
+
+library(viper)
+enrichMat_viper <- viper(counts, 
+                viperRegulon,
+                nes = TRUE, 
+                method = "scale",
+                minsize = 2,
+                eset.filter = F, 
+                adaptive.size = F)
+
+naRows <- which(is.nan(rowSums(enrichMat_viper)))
+naRows
+if(length(naRows) > 0){
+  enrichMat_viper <- enrichMat_viper[-naRows,]
+}
+```
+
+## AUCell
+
+```{r}
+library(AUCell)
+library(tidyverse)
+library(GSEABase)
+constructGenesets <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  genesets = dfReg %>%
+    group_by(tf) %>%
+    summarise(geneset = list(GSEABase::GeneSet(target))) %>%
+    transmute(tf, geneset2 = pmap(., .f=function(tf, geneset, ...) {
+      setName(geneset) = tf
+      return(geneset)
+    })) %>%
+    deframe() %>%
+    GeneSetCollection()
+}
+genesets <- constructGenesets(X, alpha)
+
+
+obj <- AUCell_buildRankings(t(scale(t(counts))), nCores=1, plotStats = F, verbose = F) %>% 
+  AUCell_calcAUC(genesets, ., verbose=F)
+resAUCell <- AUCell::getAUC(obj)
+enrichMat_AUCell <- resAUCell[colnames(X),]
+```
+
+
+## Dimensionality reduction on the output of each method
+
+```{r}
+library(scater)
+set.seed(44)
+pcViper <- scater::calculatePCA(x = enrichMat_viper,
+                               ncomponents = 10,
+                               ntop = nrow(enrichMat_viper))
+
+pcAUCell <- scater::calculatePCA(x = enrichMat_AUCell,
+                               ncomponents = 10,
+                               ntop = nrow(enrichMat_AUCell))
+
+pcPois <- scater::calculatePCA(x = log1p(Y_ti_poisson),
+                               ncomponents = 10,
+                               ntop = nrow(Y_ti_poisson))
+
+umapViperFull <- uwot::umap(pcViper, min_dist = 0.8)
+umapAUCellFull <- uwot::umap(pcAUCell, min_dist = 0.8)
+umapPoisLassoFull <- uwot::umap(pcPois, min_dist = 0.8)
+
+pal <- wesanderson::wes_palette("Zissou1", n=20, type="continuous")
+plot(umapViperFull, pch=16, cex=1/2, col=pal[pt1Groups], main="Viper")
+plot(umapAUCellFull, pch=16, cex=1/2, col=pal[pt1Groups], main="AUCell")
+plot(umapPoisLassoFull, pch=16, cex=1/2, col=pal[pt1Groups], main="Poisson model")
+
+## Graph-based clustering to compare 
+library(scran) ; library(bluster)
+clustViper <- clusterRows(umapViperFull, NNGraphParam(cluster.fun="louvain"))
+clustAUCell <- clusterRows(umapAUCellFull, NNGraphParam(cluster.fun="louvain"))
+clustPoisLasso <- clusterRows(umapPoisLassoFull, NNGraphParam(cluster.fun="louvain"))
+mclust::adjustedRandIndex(clustViper, pt1Groups)
+mclust::adjustedRandIndex(clustAUCell, pt1Groups)
+mclust::adjustedRandIndex(clustPoisLasso, pt1Groups)
+```
+
+
+
+# Compare with viper and AUCell using dimensionality reduction while summing/grouping cells
+
+
+## Poisson unsupervised
+
+```{r}
+set.seed(44)
+pt1Groups10 <- as.character(pt1Groups)
+for(gg in 1:nlevels(pt1Groups)){
+  curPt1Groups10 <- sample(rep(1:ceiling(table(pt1Groups)[gg] / 10), each=10)[1:table(pt1Groups)[gg]])
+  pt1Groups10[pt1Groups10 == levels(pt1Groups)[gg]] <- paste0(levels(pt1Groups)[gg],curPt1Groups10)
+}
+pt1Groups10f <- factor(pt1Groups10)
+design10 <- model.matrix(~ 0 + pt1Groups10f)
+counts10 <- counts %*% design10
+```
+
+
+```{r poisCell10, eval=FALSE}
+poisLassoRes_design10 <- transfactor::estimateActivity(counts = counts,
+                                                   X = X,
+                                                   model = "poisson",
+                                                   U = design10,
+                                                   plot = TRUE,
+                                                   verbose = TRUE,
+                                                   maxIter = 1000,
+                                                   epsilon = 1,
+                                                   sparse = TRUE,
+                                                   repressions = FALSE)
+# converged after iteration 87. Log-lik: -42841940.422
+saveRDS(poisLassoRes_design10, file="../data/poisLassoRes_repr_design10Cells.rds")
+```
+
+
+## viper
+
+```{r}
+alpha <- X
+constructViperRegulon <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  regulon <- dorothea:::df2regulon(dfReg)
+  return(regulon)
+}
+viperRegulon <- constructViperRegulon(X, alpha)
+
+library(viper)
+enrichMat_viper <- viper(counts10, 
+                viperRegulon,
+                nes = TRUE, 
+                method = "scale",
+                minsize = 2,
+                eset.filter = F, 
+                adaptive.size = F)
+
+naRows <- which(is.nan(rowSums(enrichMat_viper)))
+naRows
+if(length(naRows) > 0){
+  enrichMat_viper <- enrichMat_viper[-naRows,]
+}
+```
+
+## AUCell
+
+```{r}
+library(AUCell)
+library(tidyverse)
+library(GSEABase)
+constructGenesets <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  genesets = dfReg %>%
+    group_by(tf) %>%
+    summarise(geneset = list(GSEABase::GeneSet(target))) %>%
+    transmute(tf, geneset2 = pmap(., .f=function(tf, geneset, ...) {
+      setName(geneset) = tf
+      return(geneset)
+    })) %>%
+    deframe() %>%
+    GeneSetCollection()
+}
+genesets <- constructGenesets(X, alpha)
+
+
+obj <- AUCell_buildRankings(t(scale(t(counts10))), nCores=1, plotStats = F, verbose = F) %>% 
+  AUCell_calcAUC(genesets, ., verbose=F)
+resAUCell <- AUCell::getAUC(obj)
+enrichMat_AUCell <- resAUCell[colnames(X),]
+```
+
+
+## Dimensionality reduction on the output of each method
+
+```{r}
+poisLassoRes_design10 <- readRDS("../data/poisLassoRes_repr_design10Cells.rds")
+
+library(scater)
+set.seed(44)
+pcViper <- scater::calculatePCA(x = enrichMat_viper,
+                               ncomponents = 10,
+                               ntop = nrow(enrichMat_viper))
+
+pcAUCell <- scater::calculatePCA(x = enrichMat_AUCell,
+                               ncomponents = 10,
+                               ntop = nrow(enrichMat_AUCell))
+
+pcPois <- scater::calculatePCA(x = log1p(poisLassoRes_design10$mu_tc),
+                               ncomponents = 10,
+                               ntop = nrow(poisLassoRes_design10$mu_tc))
+
+umapViper <- uwot::umap(pcViper, min_dist = 0.8)
+umapAUCell <- uwot::umap(pcAUCell, min_dist = 0.8)
+umapPoisLasso <- uwot::umap(pcPois, min_dist = 0.8)
+
+pal <- wesanderson::wes_palette("Zissou1", n=20, type="continuous")
+plot(umapViper, pch=16, cex=1/2, col=pal[pt1Groups], main="Viper")
+plot(umapAUCell, pch=16, cex=1/2, col=pal[pt1Groups], main="AUCell")
+plot(umapPoisLasso, pch=16, cex=1/2, col=pal[pt1Groups], main="Poisson model")
+
+```
+
+
+
+
+
+# TF activity estimation without sparse initialization
+
+```{r}
+poisRes <- transfactor::estimateActivity(counts=as.matrix(counts),
+                                          model = "poisson",
+                                          X=X, 
+                                          U=U,
+                                          maxIter=1500, 
+                                          plot=TRUE, 
+                                          verbose=TRUE,
+                                          epsilon=1/2,
+                                          iterOLS = 0,
+                                          sparse = FALSE,
+                                          repressions = FALSE)
+```
+
+## TF Distance and dim red
+
+```{r}
+tfDist_euclidConsecScaled_poisson <- transfactor::tfDistance(activity = poisRes,
+                                          X = X,
+                                          counts = counts,
+                                          U = U,
+                                          distance = "Euclidean",
+                                          contrast = "consecutive",
+                                          scaleDistance = TRUE)
+
+# TF ranking
+plot(x=tfDist_euclidConsecScaled+1, y=tfDist_euclidConsecScaled_poisson+1, log="xy",
+     xlab="TF distance: sparse initialization", ylab="TF distance: no sparse initialization")
+oo1 <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
+oo2 <- order(tfDist_euclidConsecScaled_poisson, decreasing=TRUE)
+head(cbind(oo1, oo2), 9) #all 9 still in top.
+
+# Dim red
+Y_ti_poisson_noSparse <- transfactor::tfCounts(poisRes$mu_gtc, counts, U)
+pcPois <- scater::calculatePCA(x = log1p(Y_ti_poisson_noSparse),
+                               ncomponents = 10,
+                               ntop = nrow(Y_ti_poisson_noSparse))
+umapPois <- uwot::umap(pcPois, min_dist = 0.8)
+plot(umapPois, pch=16, cex=1/2, col=pal[pt1Groups], main="Poisson model")
+
+```
+
+
+
+# Clean composite figures
+
+## Trajectory/lineage
+
+```{r}
+set.seed(2)
+discPal <- c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E", "#E6AB02", "#A6761D", "gray40")
+pcCounts <- scater::calculatePCA(x = log1p(counts),
+                               ncomponents = 10,
+                               ntop = 1e3)
+umapCounts <- uwot::umap(pcCounts, min_dist = 0.8)
+
+dfUMAPCounts <- data.frame(UMAP1=umapCounts[,1],
+                           UMAP2=umapCounts[,2],
+                           cellType=droplevels(ct1))
+pTraj <- ggplot(dfUMAPCounts, aes(x=UMAP1, y=UMAP2, color=cellType)) + 
+  geom_point(size=.2) +
+  scale_color_manual(values=discPal) +
+  theme_classic()
+pTraj <- cowplot::plot_grid(pTraj, labels="a")
+pTraj
+ggsave("../plots/neuronalLineage.pdf")
+```
+
+## Heatmap of TF activity
+
+```{r}
+wesanderson::wes_palette("Darjeeling1", 3)
+annColors <- list(cellType=c('HBC*' = "#7570B3",
+                             'GBC' = "#1B9E77",
+                             'iOSN' = "#E7298A",
+                             'mOSN' = "#66A61E"),
+                  cluster=c('1' = "#FF0000",
+                            '2' = "#00A08A",
+                            '3' = "#F2AD00"))
+phm <- pheatmap(yhatScaled, cluster_cols = FALSE, 
+         show_colnames = FALSE, show_rownames = FALSE,
+         border_color = NA, annotation_row = anro,
+         annotation_names_row = TRUE, annotation_legend = TRUE,
+         annotation_col = ancol, legend = FALSE, 
+         annotation_colors = annColors)
+```
+
+## Top distance TFs
+
+```{r}
+ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
+topTFs <- names(tfDist_euclidConsecScaled[ooEuclidScaled[1:9]])
+pTFList <- list()
+for(tt in 1:9){
+  curTF <- topTFs[tt]
+  curDF <- data.frame(bin=pt1Groups,
+                      contribution=pi_ti_poisson[curTF,])
+  pTFList[[tt]] <- ggplot(curDF, aes(x=bin, y=contribution, color=bin)) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values=wesanderson::wes_palette("Zissou1", nlevels(pt1Groups), "continuous")) +
+    theme(axis.text.x = element_blank(),
+        legend.position = "none",
+        axis.title = element_text(size=5),
+        axis.text.y = element_text(size=5),
+        title = element_text(size=8)) +
+    xlab("Pseudotime") +
+    ylab("Contribution") +
+    ggtitle(curTF)
+    
+    
+}
+
+pTF <- cowplot::plot_grid(plotlist=pTFList, labels=c("c"))
+pTF
+ggsave("plots/topTFsPoissonLasso.pdf")
+```
+
+## Dimensionality reduction
+
+
+```{r}
+plotUMAP <- function(dr, pt1Groups){
+  df <- data.frame(UMAP1=dr[,1],
+                   UMAP2=dr[,2],
+                   ptg=pt1Groups)
+  pal <- wesanderson::wes_palette("Zissou1", nlevels(pt1Groups), "continuous")
+  ggplot(df, aes(x=UMAP1, y=UMAP2, color=ptg)) + 
+    geom_point(size=.2) +
+    scale_color_manual(values=pal) +
+    theme_classic() +
+    theme(legend.position = "none")
+}
+
+pViper <- plotUMAP(umapViperFull, pt1Groups) + ggtitle("viper")
+pAUCell <- plotUMAP(umapAUCellFull, pt1Groups) + ggtitle("AUCell")
+pPoisLasso <- plotUMAP(umapPoisLassoFull, pt1Groups) + ggtitle("Poisson lasso")
+pPois <- plotUMAP(umapPois, pt1Groups) + ggtitle("Poisson")
+
+pDR <- cowplot::plot_grid(pViper, pAUCell, pPoisLasso, pPois, labels="d")
+pDR
+```
+
+## Composite
+
+```{r}
+pComp <- gridExtra::grid.arrange(pTraj, pTF, phm[[4]], pDR)
+ggsave(file="../plots/oeComposite.pdf", pComp, width=11, height=12)
+```
+
+

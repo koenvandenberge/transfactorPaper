@@ -1,3 +1,6 @@
+case/oe/data/pySCENIC_results/output1_grn.csv
+case/oe/data/poisLassoRes_repr_design10Cells.rds
+case/yeast/data/poisRes_repr_design10Cells.rds
 simulation/plots*
 simulation/dyngen/datasets*
 .Rproj.user

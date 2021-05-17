@@ -1,0 +1,484 @@
+---
+title: "Yeast scRNA-seq TF KO"
+author: "Koen Van den Berge"
+date: "9/21/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r}
+library(irlba)
+library(uwot)
+library(ggplot2)
+library(transfactor)
+
+# data and metadata
+data <- read.table("../data/103118_SS_Data.tsv.gz")
+condition <- data$Condition
+condition <- as.character(condition)
+condition[condition == "AmmoniumSulfate"] <- "NLIM_NH4"
+condition[condition == "Glutamine"] <- "NLIM_GLN"
+condition[condition == "MinimalEtOH"] <- "MIN_EtOH"
+condition[condition == "MinimalGlucose"] <- "MIN_Gluc"
+condition[condition == "Proline"] <- "NLIM_PRO"
+condition[condition == "Urea"] <- "NLIM_UREA"
+condition <- factor(condition)
+genotype <- data$Genotype_Group
+replicate <- data$Replicate
+metaColNames <- c("Condition", "Genotype", "Genotype_Group", "tenXBarcode", "Replicate")
+counts <- t(as.matrix(data[,!colnames(data) %in% metaColNames]))
+
+# gene regulatory network
+network <- read.table("../data/signed_network.tsv", header=TRUE)
+rownames(network) <- network$target
+X <- as.matrix(network[,-1])
+
+
+```
+
+# Biological questions and hypotheses
+
+Characteristics of different growth conditions:
+
+ - YPD: Yeast Extract, Peptone, D-Glucose. A normal growth condition, where glucose is the main energy source through glycolysis, releasing ethanol.
+ - YPDDiauxic: YPD (Harvested after Post-Diauxic Shift). When glucose becomes limiting, the cells enter diauxic shift characterized by decreased growth rate and by switching metabolism from glycolysis to aerobic utilization of ethanol.
+ - YPDRapa: YPD + 200 ng/mL Rapamycin. Rapamycin is a potent inhibitor of TOR and inhibits proliferation of yeast cells.
+ - YPEtOH: Yeast Extract, Peptone, Ethanol. Like YPD, except that D-Glucose is replaced by ethanol, therefore switching the main carbon source to ethanol.
+ - MIN_Gluc: Minimal media with Glucose as main carbon source. Ammonium sulfate is main nitrogen source.
+ - MIN_EtOH: Minimal media with ethanol as main carbon source. Ammonium sulfate is main nitrogen source.
+ - NLIM_GLN: Nitrogen limited medium with Glutamin. Nitrogen source is therefore Glutamin.
+ - NLIM_NH4: Nitrogen limited medium with Ammonium Sulfate. Nitrogen source is therefore NH4SO4.
+ - NLIM_PRO: Nitrogen limited medium with Proline. Nitrogen source is therefore Proline.
+ - NLIM_UREA: Nitrogen limited medium with urea. Nitrogen source is therefore urea.
+ - CStarve: Carbon-deprived medium. No Carbon source available.
+
+Some observations:
+
+- The rapamycin condition should inhibit the TOR signaling pathway.
+ - All conditions starting with `YP` get their nitrogen source from a *'Yeast Extract + Peptone (YP)'*, which is a rich, complex nitrogen source. All other conditions each have a different nitrogen source. Therefore, there should be a consistent change in nitrogen metabolism related TFs in the YP vs other groups. It is mentioned in the paper that *'the nitrogen catabolite repression (NCR) pathway is regulated principally by TORC1 and consists of the TFs GAT1, GLN3, DAL80 and GZF3, and is responsible for suppressing the utilization of non-preferred nitrogen sources when preferred nitrogen sources are available.'*. Later in the paper it says *GAP1 (General Amino acid Permease) is a transporter responsible for importing amino acids under conditions of nitrogen limitation. GAP1 expression is regulated by the NCR activators GAT1 and GLN3.*.
+- There are three groups of carbon sources. YPEtOH and MMEtOH utilize ethanol as a carbon source. CStarve has no carbon source. All other conditions have D-glucose as their carbon source. These three groups should differ in terms of the relevant TFs' activities.
+- There are six 'Minimal Media' conditions (MIN and NLIM). On the UMAP, MinimalEtOH and MinimalEtOH cluster together with Proline. Also Urea and AmmoniumSulfate cluster together.
+
+
+# Estimate TF activity
+
+```{r}
+genoCond <- factor(paste0(as.character(genotype),",",as.character(condition)))
+nlevels(genoCond) #132 different levels!
+design <- model.matrix(~ -1 + genoCond)
+```
+
+
+```{r, eval=FALSE}
+poisRes_repr <- transfactor::estimateActivity(counts = counts, 
+                                              X = X,
+                                              model = "poisson",
+                                              U = design,
+                                              maxIter = 1000,
+                                              epsilon = 1,
+                                              sparse = FALSE,
+                                              repressions = TRUE,
+                                              verbose = TRUE,
+                                              plot = TRUE)
+
+saveRDS(poisRes_repr, file="../data/poisRes_repressions_transfactor.rds")
+```
+
+
+
+```{r}
+poisRes_repr <- readRDS("../data/poisRes_repressions_transfactor.rds")
+Y_ti <- transfactor::tfCounts(mu_gtc = poisRes_repr$mu_gtc, 
+                       counts = counts, 
+                       design = design)
+plot(x=colSums(counts[rownames(X),]), 
+     y=colSums(Y_ti)) ; abline(0,1,col="red")
+plot(x=colSums(poisRes_repr$countsSufStats), 
+     y=colSums(Y_ti %*% design)) ; abline(0,1,col="red")
+pi_ti <- sweep(Y_ti, 2, colSums(Y_ti), "/")
+
+mapID <- read.table("../data/yeast_gene_names.tsv", sep="\t", header=TRUE)
+```
+
+# Heatmap of TF activity
+
+
+```{r}
+library(pheatmap)
+library(RColorBrewer)
+mu_tc <- poisRes_repr$mu_tc
+colnames(mu_tc) <- colnames(design)
+conditionDesign <- factor(unlist(lapply(strsplit(colnames(design), split=","), "[[", 2)))
+annoCol <- data.frame(condition=conditionDesign)
+rownames(annoCol) <- colnames(mu_tc)
+mu_tc_scaled <- t(scale(t(mu_tc)))
+color <- colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100)
+hist(mu_tc_scaled)
+breaks <- seq(-2, 4, length=100)
+breaks <- c(breaks, 12)
+pheatmap(mu_tc_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method =  "ward.D2")
+
+pdf("../plots/bigHeatmapTFActivity_v2.pdf", width=12, height=18)
+pheatmap(mu_tc_scaled,
+         show_rownames=TRUE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method =  "ward.D2")
+dev.off()
+
+
+## How does this compare to a heatmap where we use TF expression?
+avTFExpr <- (counts[colnames(X),] %*% design) %*% diag(1/colSums(design))
+avTFExpr_scaled <- t(scale(t(avTFExpr)))
+colnames(avTFExpr_scaled) <- colnames(design)
+breaks <- seq(-2.4, 4, length=100)
+breaks <- c(breaks, 12)
+pheatmap(avTFExpr_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method =  "ward.D2")
+
+
+phTFAct <- pheatmap(mu_tc_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method =  "ward.D2")
+clTFAct <- cutree(phTFAct$tree_col, k=nlevels(condition))
+phTFExpr <- pheatmap(avTFExpr_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method =  "ward.D2")
+clTFExpr <- cutree(phTFExpr$tree_col, k=nlevels(condition))
+
+mclust::adjustedRandIndex(clTFAct, conditionDesign)
+mclust::adjustedRandIndex(clTFExpr, conditionDesign)
+
+# also higher for other clustering methods:
+# complete: TF: 0.40, count: 0.40
+# single: TF: 0.04, count: 0.01
+# average: TF: 0.15, count: 0.02
+```
+
+
+
+# Explore heatmap results
+
+## TFs up in YPD
+
+These TFs are involved in optimal growth conditions, cell cycle, and glucose repression (whereby cells grown on glucose repress the expression of a large number of genes that are required for the metabolism of alternate carbon sources).
+Also many TFs involved in transcription of ribosomal protein genes.
+
+```{r}
+ypdTFs <- c("YGL035C", "YCR065W", "YDR520C", "YLR223C", "YLR403W", "YNL068C", "YOR032C")
+ypdTFNames <- mapID$Name[mapID$SystematicName %in% ypdTFs]
+ypdTFNames
+```
+
+## TFs up in CStarve 
+
+```{r}
+cstarveTFs <- c("YMR164C", "YAL051W", "YPR199C", "YDR216W")
+cstarveTFNames <- mapID$Name[mapID$SystematicName %in% cstarveTFs]
+cstarveTFNames
+```
+
+
+# Diauxic shift: glycolysis and ethanol metabolism
+
+In this condition, glycolysis should be down and ethanol up.
+
+Glycolysis genes downloaded from https://pathway.yeastgenome.org/YEAST/pathway-genes?object=GLYCOLYSIS. However, none of these are TFs. Approximating the analysis by selecting TFs that regulate these genes is not interesting, and also too far of a conceptual leap.
+
+
+```{r}
+### paper https://www.mcponline.org/action/showPdf?pii=S1535-9476%2820%2932651-7
+# induced TFs: HAP2/3/4, CAT8, BAS1, MSN2/4, FHL1, RAP1.
+paperTFs <- c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1")
+all(paperTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+paperTFGRN <- tfGRN[tfGRN$name %in% paperTFs,]
+rownames(paperTFGRN) <- paperTFGRN$name
+paperTFGRN <- paperTFGRN[paperTFs,]
+paperTFGRN$type <- c(rep("up", 7), rep("down", 2))
+all(paperTFs %in% tfGRN$name)
+
+# late-induced proteins: HAP2/3/4, CAT8: Limited activity for HAPs, high for CAT8.
+# early-induced proteins: BAS1, MSN2, MSN4: Only for MSN4 evidence.
+# FHL1 and RAP1 are repressed after a while and we find no activity of these.
+
+diauxicColumns <- grep(x = colnames(design),
+                       pattern = "YPDDiauxic")
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+pListDiaux <- list()
+for(kk in 1:nrow(paperTFGRN)){
+  curTF <- paperTFGRN$sys[kk]
+  ypd <- poisRes_repr$mu_tc[curTF,ypdColumns]
+  diaux <- poisRes_repr$mu_tc[curTF,diauxicColumns]
+  df <- data.frame(activity = c(ypd, diaux),
+                   condition = factor(rep(c("YPD", "Diaux"), each=length(ypd), levels=c("YPD", "Diaux"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 2)))
+  p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(paste0(paperTFGRN$name[kk], " (",paperTFGRN$type[kk],")")) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF activity", 
+                       breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                       labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+    scale_x_discrete(limits=c("YPD", "Diaux"))
+  #print(p)
+  pListDiaux[[kk]] <- p
+}
+cowplot::plot_grid(plotlist = pListDiaux)
+```
+
+# Nitrogen limitation and the TOR signaling pathway
+
+```{r}
+## line plots
+nitroTFs <- c("GAT1", "GLN3", "RTG1", "RTG3")
+all(nitroTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+nitroTFGRN <- tfGRN[tfGRN$name %in% nitroTFs,]
+rownames(nitroTFGRN) <- nitroTFGRN$name
+nitroTFGRN <- nitroTFGRN[nitroTFs,]
+all(nitroTFs %in% nitroTFGRN$name)
+
+
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+nitroColumns <- grep(x = colnames(design),
+                       pattern = "NLIM_")
+pListNitro <- list()
+for(kk in 1:nrow(nitroTFGRN)){
+  curTF <- nitroTFGRN$sys[kk]
+  ypd <- poisRes_repr$mu_tc[curTF,ypdColumns]
+  nitro <- poisRes_repr$mu_tc[curTF,nitroColumns]
+  df <- data.frame(activity = c(ypd, nitro),
+                   condition = factor(rep(c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"), each=length(ypd), levels=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 5)))
+  p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(nitroTFGRN$name[kk]) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF activity", 
+                       breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                       labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+    scale_x_discrete(limits=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA")) +
+    theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9))
+  #print(p)
+  pListNitro[[kk]] <- p
+}
+cowplot::plot_grid(plotlist = pListNitro)
+
+```
+
+# Does estimated TF activity correlate with TF expression?
+
+```{r}
+avTFExpr <- (counts[colnames(X),] %*% design) %*% diag(1/colSums(design))
+plot(x=t(scale(t(avTFExpr))), y=t(scale(t(mu_tc))), pch=16, cex=1/2, 
+     col=conditionDesign)
+smoothScatter(x=t(scale(t(avTFExpr))), y=t(scale(t(mu_tc))), pch=16, cex=1/2, 
+     col=conditionDesign)
+```
+
+
+# Unsupervised TF activity estimation
+
+Here, we compare our results on TF activity to those of `viper` and `AUCell`. Note, that `viper` and `AUCell` work unsupervised, i.e., they do not use information on the conditions nor genotypes. We will approximate this by allowing each combination of 10 cells to be its own group.
+For `viper` and `AUCell`, we will sum the counts of those 10 cells.
+
+```{r}
+set.seed(44)
+genoCond10 <- as.character(genoCond)
+for(gg in 1:nlevels(genoCond)){
+  curGenoCond10 <- sample(rep(1:ceiling(table(genoCond)[gg] / 10), each=10)[1:table(genoCond)[gg]])
+  genoCond10[genoCond10 == levels(genoCond)[gg]] <- paste0(levels(genoCond)[gg],curGenoCond10)
+}
+genoCond10f <- factor(genoCond10)
+design10 <- model.matrix(~ 0 + genoCond10f)
+```
+
+
+```{r poisCell10, eval=FALSE}
+poisRes_repr_design10 <- transfactor::estimateActivity(counts = counts,
+                                                   X = X,
+                                                   model = "poisson",
+                                                   U = design10,
+                                                   plot = TRUE,
+                                                   verbose = TRUE,
+                                                   maxIter = 1000,
+                                                   epsilon = 1,
+                                                   sparse = FALSE,
+                                                   repressions = TRUE)
+# converged after iteration 90. Log-lik: -94708908.558
+saveRDS(poisRes_repr_design10, file="../data/poisRes_repr_design10Cells.rds")
+```
+
+
+## viper and AUCell
+
+```{r viperAUCell10}
+library(viper)
+library(AUCell)
+library(GSEABase)
+library(tidyverse)
+counts10 <- counts %*% design10
+
+constructViperRegulon <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  regulon <- dorothea:::df2regulon(dfReg)
+  return(regulon)
+}
+
+constructGenesets <- function(X, alpha){
+  tfAll <- unlist(mapply(rep, colnames(X), each=colSums(abs(X))))
+  targetAll <- rownames(X)[unlist(apply(abs(X),2, function(x) which(x > 0)))]
+  mor <- X[abs(X)>0]
+  alphaAll <- alpha[abs(X)>0] / max(alpha)
+  dfReg <- data.frame(tf=tfAll,
+                      target=targetAll,
+                      mor=X[abs(X)>0],
+                      likelihood=alphaAll)
+  dfReg <- dfReg[!duplicated(dfReg),]
+  dfReg$tf <- as.character(dfReg$tf)
+  dfReg$target <- as.character(dfReg$target)
+  genesets = dfReg %>%
+    group_by(tf) %>%
+    summarise(geneset = list(GSEABase::GeneSet(target))) %>%
+    transmute(tf, geneset2 = pmap(., .f=function(tf, geneset, ...) {
+      setName(geneset) = tf
+      return(geneset)
+    })) %>%
+    deframe() %>%
+    GeneSetCollection()
+}
+
+regulon <- constructViperRegulon(X, alpha=X)
+viperRes <- viper(counts10,
+                    regulon,
+                    nes = TRUE,
+                    method = "scale",
+                    minsize = 2,
+                    eset.filter = F,
+                    adaptive.size = F)
+viperRes <- viperRes[colnames(X)[colnames(X) %in% rownames(viperRes)],]
+
+genesets <- constructGenesets(X, alpha = X)
+obj <- AUCell_buildRankings(t(scale(t(counts10))), nCores=1, 
+                            plotStats = F, verbose = F) %>%
+  AUCell_calcAUC(genesets, ., verbose=F)
+resAUCell <- AUCell::getAUC(obj)
+resAUCell <- resAUCell[colnames(X),]
+```
+
+## Dimensionality reduction
+
+```{r}
+poisRes_repr_design10 <- readRDS("../data/poisRes_repr_design10Cells.rds")
+library(scater)
+set.seed(44)
+pcViper <- scater::calculatePCA(x = viperRes,
+                               ncomponents = 10,
+                               ntop = nrow(viperRes))
+pcAUCell <- scater::calculatePCA(x = resAUCell,
+                               ncomponents = 10,
+                               ntop = nrow(resAUCell))
+pcPois <- scater::calculatePCA(x = poisRes_repr_design10$mu_tc,
+                               ncomponents = 10,
+                               ntop = ncol(X))
+pcOrig10 <- scater::calculatePCA(x = log1p(counts10),
+                               ncomponents = 10,
+                               ntop = ncol(X))
+pcOrig <- scater::calculatePCA(x = log1p(counts),
+                               ncomponents = 10,
+                               ntop = ncol(X))
+
+
+umapViper <- uwot::umap(pcViper, min_dist = 0.8)
+umapAUCell <- uwot::umap(pcAUCell, min_dist = 0.8)
+umapPois <- uwot::umap(pcPois, min_dist = 0.8)
+umapOrig10 <- uwot::umap(pcOrig10, min_dist = 0.8)
+umapOrig <- uwot::umap(pcOrig, min_dist = 0.8)
+
+
+plotUMAP <- function(dr, group, main=NULL){
+  pal <- wesanderson::wes_palette("Darjeeling1", n=nlevels(cond10), type="continuous")
+  df <- data.frame(UMAP1=dr[,1],
+                   UMAP2=dr[,2],
+                   group=group)
+  ggplot(df, aes(x=UMAP1, y=UMAP2, color=group)) + 
+    geom_point(size=.2) +
+    scale_color_manual(values=pal) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    ggtitle(main)
+}
+
+cond10 <- factor(gsub(x=unlist(lapply(strsplit(colnames(design10), split=","), "[[", 2)),
+     pattern="[0-9]+",
+     replacement=""))
+geno10 <- factor(unlist(lapply(strsplit(genoCond10, split=","), "[[", 1)))
+pOrig10 <- plotUMAP(umapOrig10, cond10, main="Summed counts")
+pViper <- plotUMAP(umapViper, cond10, main="viper")
+pAUCell <- plotUMAP(umapAUCell, cond10, main="AUCell")
+pTransfactor <- plotUMAP(umapPois, cond10, main="transfactor")
+pOrig <- plotUMAP(umapOrig, condition, main="original counts")
+pDR <- cowplot::plot_grid(pOrig10, pViper, pAUCell, pTransfactor)
+pDR
+## Graph-based clustering to compare 
+library(scran) ; library(bluster)
+clustViper <- clusterRows(umapViper, NNGraphParam(cluster.fun="louvain"))
+clustAUCell <- clusterRows(umapAUCell, NNGraphParam(cluster.fun="louvain"))
+clustPois <- clusterRows(umapPois, NNGraphParam(cluster.fun="louvain"))
+clustOrig10 <- clusterRows(umapOrig10, NNGraphParam(cluster.fun="louvain"))
+mclust::adjustedRandIndex(clustViper, cond10)
+mclust::adjustedRandIndex(clustAUCell, cond10)
+mclust::adjustedRandIndex(clustPois, cond10)
+mclust::adjustedRandIndex(clustOrig10, cond10)
+```
+
+
+# Composite figure
+
+```{r}
+# heatmap of activities, where groups of TFs are shown in rectangles.
+pHeat <- pheatmap(mu_tc_scaled,
+         show_rownames=FALSE, show_colnames=FALSE,
+         annotation_col=annoCol, col=color,
+         breaks=breaks, clustering_method = "ward.D2")
+
+pDiaux <- cowplot::plot_grid(plotlist = pListDiaux)
+pNitro <- cowplot::plot_grid(plotlist = pListNitro)
+
+saveRDS(pHeat, file="../plots/pHeatTFAct.rds")
+saveRDS(pDiaux, file="../plots/pDiaux.rds")
+saveRDS(pNitro, file="../plots/pNitro.rds")
+saveRDS(pDR, file="../plots/pDR.rds")
+
+cowplot::plot_grid(pHeat[[4]], pDiaux, pNitro, pDR, labels=letters[1:4])
+ggsave("../plots/compositeFigure.pdf", width=12, height=12)
+```

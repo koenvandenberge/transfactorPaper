@@ -344,14 +344,18 @@ dfAUCAll$method <- factor(dfAUCAll$method,
                                      "dirMult", "dirMult_lasso", "dirMult_lasso_repr",
                                      "dirMult_alphaEst", "dirMult_lasso_alphaEst", "dirMult_lasso_alphaEst_repr",
                                       "viper", "AUCell"))
+
 ggplot(dfAUCAll, aes(x=method, y=auc)) +
   geom_boxplot(aes(col=method)) +
   facet_wrap(.~noiseTFs * noiseEdges, 
              ncol = length(nNoiseEdgeGrid), 
              nrow = length(nNoiseTFGrid)) +
-  theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9)) +
-  theme_bw()
-ggsave("../plots/aucAllSettings_dyngen.pdf", width=12)
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=4) +
+  xlab("") + ylab("AUC")
+ggsave("../plots/aucAllSettings_dyngen.pdf", width=12, height=9)
 ```
 
 

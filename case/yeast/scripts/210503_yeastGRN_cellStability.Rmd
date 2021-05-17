@@ -1,0 +1,258 @@
+---
+title: "Yeast scRNA-seq TF KO"
+author: "Koen Van den Berge"
+date: "9/21/2020"
+output: html_document
+---
+
+```{r}
+library(irlba)
+library(uwot)
+library(ggplot2)
+library(transfactor)
+
+# data and metadata
+data <- read.table("../data/103118_SS_Data.tsv.gz")
+condition <- data$Condition
+condition <- as.character(condition)
+condition[condition == "AmmoniumSulfate"] <- "NLIM_NH4"
+condition[condition == "Glutamine"] <- "NLIM_GLN"
+condition[condition == "MinimalEtOH"] <- "MIN_EtOH"
+condition[condition == "MinimalGlucose"] <- "MIN_Gluc"
+condition[condition == "Proline"] <- "NLIM_PRO"
+condition[condition == "Urea"] <- "NLIM_UREA"
+condition <- factor(condition)
+genotype <- factor(data$Genotype_Group)
+replicate <- data$Replicate
+metaColNames <- c("Condition", "Genotype", "Genotype_Group", "tenXBarcode", "Replicate")
+counts <- t(as.matrix(data[,!colnames(data) %in% metaColNames]))
+
+# gene regulatory network
+network <- read.table("../data/signed_network.tsv", header=TRUE)
+rownames(network) <- network$target
+X <- as.matrix(network[,-1])
+
+mapID <- read.table("../data/yeast_gene_names.tsv", sep="\t", header=TRUE)
+```
+
+# Diauxic shift TFs
+
+```{r}
+paperTFs <- c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1")
+all(paperTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+paperTFGRN <- tfGRN[tfGRN$name %in% paperTFs,]
+rownames(paperTFGRN) <- paperTFGRN$name
+paperTFGRN <- paperTFGRN[paperTFs,]
+paperTFGRN$type <- c(rep("up", 7), rep("down", 2))
+all(paperTFs %in% tfGRN$name)
+```
+
+# Nitrogen metabolism
+
+```{r}
+nitroTFs <- c("GAT1", "GLN3", "RTG1", "RTG3")
+all(nitroTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+nitroTFGRN <- tfGRN[tfGRN$name %in% nitroTFs,]
+rownames(nitroTFGRN) <- nitroTFGRN$name
+nitroTFGRN <- nitroTFGRN[nitroTFs,]
+all(nitroTFs %in% nitroTFGRN$name)
+```
+
+
+
+# Stability using bootstrapping
+
+```{r}
+nBoot <- 30
+genoCond <- factor(paste0(as.character(genotype),",",
+                                as.character(condition)))
+design <- model.matrix(~ -1 + genoCond)
+diauxicColumns <- grep(x = colnames(design),
+                         pattern = "YPDDiauxic")
+ypdColumns <- grep(x = colnames(design),
+                         pattern = "YPD$")
+ypdColumns <- grep(x = colnames(design),
+                         pattern = "YPD$")
+nitroColumns <- grep(x = colnames(design),
+                       pattern = "NLIM_")
+nitroColumnNames <- grep(x = colnames(design),
+                       pattern = "NLIM_", value = TRUE)
+uniqNitroColumnNames <- unique(unlist(lapply(strsplit(x=nitroColumnNames, split=","), "[[", 2)))
+nNitroConditions <- length(nitroColumns) / nlevels(genotype)
+
+```
+
+```{r, eval=FALSE}
+slopeMatDiaux <- array(NA, dim=c(length(paperTFs), nlevels(genotype), nBoot),
+                  dimnames = list(paperTFs, levels(genotype), paste0("boot",1:nBoot)))
+slopeMatNitro <- array(NA, dim=c(length(nitroTFs), nlevels(genotype) * 4, nBoot),
+                    dimnames = list(nitroTFs, colnames(design)[nitroColumns], paste0("boot",1:nBoot)))
+for(ii in 1:nBoot){
+  set.seed(ii)
+  # Bootstrap
+  bootID <- sample(ncol(counts), ncol(counts), replace=TRUE)
+  bootCounts <- counts[,bootID]
+  genoCondBoot <- factor(paste0(as.character(genotype)[bootID],",",
+                                as.character(condition)[bootID]))
+  designBoot <- model.matrix(~ -1 + genoCondBoot)
+  # Estimate activity
+  poisRes_repr_boot <- transfactor::estimateActivity(counts = bootCounts,
+                                                     X = X,
+                                                     model = "poisson",
+                                                     U = designBoot,
+                                                     plot = FALSE,
+                                                     verbose = FALSE,
+                                                     maxIter = 1000,
+                                                     epsilon = 1,
+                                                     sparse = FALSE,
+                                                     repressions = TRUE)
+  
+  
+  ## Diauxic shift
+  pListDiaux <- list()
+  for(kk in 1:nrow(paperTFGRN)){
+    curTF <- paperTFGRN$sys[kk]
+    curTFName <- paperTFGRN$name[kk]
+    ypd <- poisRes_repr_boot$mu_tc[curTF,ypdColumns]
+    diaux <- poisRes_repr_boot$mu_tc[curTF,diauxicColumns]
+    df <- data.frame(activity = c(ypd, diaux),
+                     condition = factor(rep(c("YPD", "Diaux"), each=length(ypd), levels=c("YPD", "Diaux"))),
+                     genotype = factor(rep(1:nlevels(genotype[bootID]), 2)))
+    p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+      geom_point() +
+      geom_line() + 
+      ggtitle(paste0(paperTFGRN$name[kk], " (",paperTFGRN$type[kk],")")) +
+      theme_classic() +
+      theme(legend.position = "none") +
+      xlab(NULL) +
+      scale_y_continuous(name = "TF activity", 
+                         breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                         labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+      scale_x_discrete(limits=c("YPD", "Diaux"))
+    #print(p)
+    pListDiaux[[kk]] <- p
+    curBeta <- diaux - ypd
+    slopeMatDiaux[curTFName,, ii] <- curBeta
+  }
+  cowplot::plot_grid(plotlist = pListDiaux)
+  
+  
+  # Nitrogen limitation
+  pListNitro <- list()
+  for(kk in 1:nrow(nitroTFGRN)){
+    curTF <- nitroTFGRN$sys[kk]
+    curTFName <- nitroTFGRN$name[kk]
+    ypd <- poisRes_repr_boot$mu_tc[curTF,ypdColumns]
+    nitro <- poisRes_repr_boot$mu_tc[curTF,nitroColumns]
+    df <- data.frame(activity = c(ypd, nitro),
+                     condition = factor(rep(c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"), each=length(ypd), levels=c("YPD", "Diaux"))),
+                     genotype = factor(rep(1:nlevels(genotype[bootID]), 5)))
+    p <- ggplot(df, aes(x=condition, y=activity, group=genotype, col=genotype)) +
+      geom_point() +
+      geom_line() + 
+      ggtitle(nitroTFGRN$name[kk]) +
+      theme_classic() +
+      theme(legend.position = "none") +
+      xlab(NULL) +
+      scale_y_continuous(name = "TF activity", 
+                         breaks = signif(c(min(df$activity), max(df$activity)), 2), 
+                         labels = signif(c(min(df$activity), max(df$activity)), 2)) +
+      scale_x_discrete(limits=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA")) +
+      theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9))
+    pListNitro[[kk]] <- p
+    curBeta <- nitro - ypd
+    slopeMatNitro[curTFName,, ii] <- curBeta
+  }
+  cowplot::plot_grid(plotlist = pListNitro)
+}
+
+saveRDS(slopeMatDiaux, file = "../data/slopeMatDiauxBootstraps.rds")
+saveRDS(slopeMatNitro, file = "../data/slopeMatNitroBootstraps.rds")
+```
+
+# Activity on full data
+
+```{r}
+poisRes_repr <- readRDS("../data/poisRes_repressions_transfactor.rds")
+
+
+# Diauxic
+for(kk in 1:nrow(paperTFGRN)){
+  curTF <- paperTFGRN$sys[kk]
+  ypd <- poisRes_repr$mu_tc[curTF,ypdColumns]
+  diaux <- poisRes_repr$mu_tc[curTF,diauxicColumns]
+  df <- data.frame(slope = diaux - ypd,
+                    genotype = factor(levels(genotype)))
+  df$TF <- paperTFGRN$name[kk]
+  if(kk == 1){
+    dfAllDiaux <- df
+  } else {
+    dfAllDiaux <- rbind(dfAllDiaux, df)
+  }
+}
+
+# Nitrogen
+for(kk in 1:nrow(nitroTFGRN)){
+  curTF <- nitroTFGRN$sys[kk]
+  ypd <- poisRes_repr$mu_tc[curTF,ypdColumns]
+  nitro <- poisRes_repr$mu_tc[curTF,nitroColumns]
+  df <- data.frame(slope = nitro - ypd,
+                  genotype = rep(factor(levels(genotype)), each=4),
+                  condition = factor(rep(c("NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"), length(ypd))))
+  df$TF <- nitroTFGRN$name[kk]
+  if(kk == 1){
+    dfAllNitro <- df
+  } else {
+    dfAllNitro <- rbind(dfAllNitro, df)
+  }
+}
+```
+
+
+
+# Visualize variability in slope
+
+```{r}
+slopeMatDiaux <- readRDS("../data/slopeMatDiauxBootstraps.rds")
+slopeMatNitro <- readRDS("../data/slopeMatNitroBootstraps.rds")
+```
+
+
+```{r}
+library(tidyverse)
+slopeDiaux <- as.data.frame.table(slopeMatDiaux)
+colnames(slopeDiaux) <- c("TF", "genotype", "boot", "slope")
+slopeDiaux$TF <- factor(slopeDiaux$TF, levels = c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1"))
+dfAllDiaux$TF <- factor(dfAllDiaux$TF, levels = c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1"))
+pDiauxStability <- ggplot(slopeDiaux, aes(x=genotype, y=slope)) +
+  geom_violin() +
+  facet_wrap(TF ~ ., dir="h") +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=45, hjust=.9)) +
+  geom_hline(yintercept = 0, lty=2, col="red", alpha=.3) +
+  geom_point(data = dfAllDiaux, col = "blue", size=1) # on full data
+pDiauxStability
+saveRDS(pDiauxStability, file="../plots/pDiauxStability.rds")
+```
+
+
+```{r}
+slopeNitro <- as.data.frame.table(slopeMatNitro)
+colnames(slopeNitro) <- c("TF", "genotypeCondition", "boot", "slope")
+slopeNitro$genotype <- factor(gsub(x=unlist(lapply(strsplit(as.character(slopeNitro$genotypeCondition), split=","), "[[", 1)), pattern="genoCond", replacement=""))
+slopeNitro$condition <- factor(unlist(lapply(strsplit(as.character(slopeNitro$genotypeCondition), split=","), "[[", 2)))
+pNitroStability <- ggplot(slopeNitro, aes(x=genotype, y=slope)) +
+  geom_violin() +
+  facet_wrap(. ~ TF*condition) +
+  theme_classic() +
+  theme(axis.text.x = element_text(angle=45, hjust=.9)) +
+  geom_hline(yintercept = 0, lty=2, col="red", alpha=.3) +
+  geom_point(data = dfAllNitro,  aes(x=genotype, y=slope), col = "blue", size=1) # on full data
+pNitroStability
+saveRDS(pNitroStability, file="../plots/pNitroStability.rds")
+```
+

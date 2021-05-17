@@ -1,0 +1,521 @@
+---
+title: "GRN simulation"
+author: "Koen Van den Berge"
+date: "9/14/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+# Simulation functions
+
+```{r}
+library(matrixStats)
+ksource <- function(x, ...) {
+  library(knitr)
+  source(purl(x, output = tempfile()), ...)
+}
+library(tidyverse)
+library(viper)
+library(AUCell)
+library(tidyverse)
+library(GSEABase)
+library(transfactor)
+
+simulateFromGRN_extended <- function(X, 
+                                   G=500, 
+                                   nTF=80,
+                                   fracDETFs=0.25,
+                                   nPerGroup=50,
+                                   nCellTypes=5, 
+                                   shape_mu_t=1, 
+                                   scale_mu_t=2, 
+                                   shape_lambda_gc=1,
+                                   scale_lambda_gc=scale_lambda_gc,
+                                   magnitude_g=rep(100, G),
+                                   seed=3,
+                                   dirichletNoise = FALSE){
+  
+  set.seed(seed)
+ 
+  ### Simulate mu_tc
+  mu_tc <- matrix(rgamma(n=nTF, shape=shape_mu_t, scale=scale_mu_t),
+                nrow=nTF, ncol=nCellTypes, byrow=FALSE)
+  ### add noise
+  # mu_tc_noise <- mu_tc + matrix(rnorm(n=length(mu_tc), mean=mu_tc, sd=.5),
+  #                               nrow=nTF, ncol=nCellTypes)
+  # mu_tc_noise[mu_tc_noise <= 0] <- 1e-5
+  mu_tc_noise <- mu_tc
+  rownames(mu_tc) <- paste0("tf",1:nTF)
+  rownames(mu_tc_noise) <- paste0("tf",1:nTF)
+  
+  ### simulate DE
+  deTFs <- sample(nTF, size=nTF * fracDETFs)
+  # simulate fold changes
+  logFC <- log(rnorm(n=length(deTFs) * (nCellTypes-1), mean=2.5, sd=.3))
+  # random sign
+  x <- rbinom(n=length(deTFs) * (nCellTypes-1), size=1, prob=.5)
+  # logFC <- log(rep(5, length(deTFs) * (nCellTypes-1)))
+  # x <- rep(1, length(deTFs) * (nCellTypes-1))
+  fcAll <- matrix(1, nrow = nTF, ncol = nCellTypes - 1)
+  fcAll[deTFs, ] <- matrix(exp(ifelse(x == 1, 1, -1) * logFC),
+                           nrow = length(deTFs), ncol = nCellTypes - 1)
+  mu_tc_noise[, -1] <- mu_tc_noise[, -1] * fcAll
+
+  ### mu_gc
+  mu_gc_sim <- X %*% mu_tc_noise
+  
+  ### calculate mu_gtc, mu_gc
+  alpha_gt <- list()
+  for(gg in 1:G){
+    id <- which(X[gg,] == 1)
+    mu_tc_id <- mu_tc_noise[id,,drop=FALSE]
+    curDimNames <- list(paste0(colnames(X)[id], ";gene",gg),
+                                paste0("celltype",letters[1:nCellTypes]))
+    # simulate from Dirichlet.
+    curalpha_gt <- rowMeans(sweep(mu_tc_id, 2, colSums(mu_tc_id), "/")) * magnitude_g[gg]
+    alpha_gt[[gg]] <- curalpha_gt
+    curmu_gtc <- sweep(sweep(mu_tc_id, 2, colSums(mu_tc_id), "/"), 2, mu_gc_sim[gg,], "*")
+    dimnames(curmu_gtc) <- curDimNames
+    curmu_gc <- colSums(curmu_gtc)
+    stopifnot(identical(round(unname(curmu_gc),2), round(mu_gc_sim[gg,],2)))
+    if(!dirichletNoise){
+      # noiseless:
+      curpi_gtc <- sweep(curmu_gtc, 2, curmu_gc, "/")
+    } else {
+      # dirichlet noise:
+      curpi_gtc <- rdirichlet(n=nCellTypes, alpha=curalpha_gt)
+      if(length(id) > 1) curpi_gtc <- t(curpi_gtc)
+      dimnames(curpi_gtc) <- curDimNames
+    }
+    if(gg == 1){
+      mu_gtc <- curmu_gtc
+      mu_gc <- curmu_gc
+      pi_gtc <- curpi_gtc
+    } else {
+      mu_gtc <- rbind(mu_gtc, curmu_gtc)
+      mu_gc <- rbind(mu_gc, curmu_gc)
+      pi_gtc <- rbind(pi_gtc, curpi_gtc)
+    }
+  }
+  rownames(mu_gc) <- paste0("gene",1:G)
+  names(alpha_gt) <- paste0("gene",1:G)
+ 
+  for(cc in 1:nCellTypes){
+    curY <- matrix(rpois(n= nPerGroup * G, lambda=mu_gc_sim[,cc]),
+                   nrow=nrow(mu_gc_sim), ncol= nPerGroup, byrow=FALSE)
+    if(cc == 1){
+      Y_igc <- curY
+    } else {
+      Y_igc <- cbind(Y_igc, curY)
+    }
+  }
+  rownames(Y_igc) <- paste0("gene",1:G)
+
+  return(list(Y=Y_igc,
+              pi_gtc=pi_gtc,
+              mu_tc=mu_tc,
+              mu_tc_noise=mu_tc_noise,
+              mu_gtc=mu_gtc,
+              mu_gc=mu_gc,
+              alpha_gt=alpha_gt,
+              fcAll = fcAll,
+              deTFs = deTFs
+              ))
+}
+```
+
+
+
+
+```{r}
+library(rafalib)
+set.seed(123)
+logit = function(x) log(x/(1-x))
+expit = function(x) exp(x)/(1+exp(x))
+set.seed(13)
+## simulation parameters
+G <- 500 #nr of genes
+nTF <- 80 #nr of TFs
+nPerGroup <- 50 #number of cells per cell type
+shape_mu_t <- 1
+scale_mu_t <- 2
+shape_lambda_gc <- 1
+scale_lambda_gc <- 1
+nCellTypes <- 5
+ct <- factor(rep(letters[1:nCellTypes], each=nPerGroup))
+design <- model.matrix(~-1 + ct)
+seed <- 3
+magnitude_g <- rep(100,G)
+
+## simulate GRN as TF regulation matrix
+X <- matrix(0, nrow=G, ncol=nTF)
+for(gg in 1:nrow(X)){
+  nGenes <- rbinom(n=1, size=30, prob=.05)
+  while(nGenes == 0) nGenes <- rbinom(n=1, size=30, prob=.05)
+  id <- sample(ncol(X), nGenes)
+  X[cbind(gg,id)] <- 1
+}
+rownames(X) <- paste0("gene",1:G)
+colnames(X) <- paste0("tf",1:nTF)
+rafalib::mypar(mfrow=c(1,2))
+barplot(table(rowSums(X)), main="By how many TFs is a gene regulated?")
+barplot(table(colSums(X)), main="How many genes is a TF regulating?")
+
+
+simRes <- simulateFromGRN_extended(X, 
+                                 G=G, 
+                                 nTF=nTF, 
+                                 nPerGroup=nPerGroup, 
+                                 shape_mu_t=shape_mu_t, 
+                                 scale_mu_t=scale_mu_t,
+                                 shape_lambda_gc=shape_lambda_gc,
+                                 scale_lambda_gc=scale_lambda_gc,
+                                 nCellTypes=nCellTypes, 
+                                 seed=3,
+                                 magnitude_g=magnitude_g)
+
+## check: mu_tc * lambda_gc = mu_gtc = mu_gc * pi_gtc
+## note that if prior=FALSE, these are exactly the same!
+## so there's only just some random noise.
+mu_tc_sim <- simRes$mu_tc
+mu_gc_sim <- simRes$mu_gc
+pi_gtc_sim <- simRes$pi_gtc
+mu_gtc_sim <- simRes$mu_gtc
+
+# check mu_gc
+mypar(mfrow=c(2,2))
+plot(x=simRes$mu_gc[,1], y=rowMeans(simRes$Y[,1:50])) ; abline(0,1,col="red")
+plot(x=simRes$mu_gc[,2], y=rowMeans(simRes$Y[,51:100])) ; abline(0,1,col="red")
+smoothScatter(x=simRes$mu_gc[,1], y=rowMeans(simRes$Y[,1:50])) ; abline(0,1,col="red")
+smoothScatter(x=simRes$mu_gc[,2], y=rowMeans(simRes$Y[,51:100])) ; abline(0,1,col="red")
+
+```
+
+# True GRN
+
+```{r}
+ct <- factor(rep(letters[1:nCellTypes], each=nPerGroup))
+design <- model.matrix(~ -1 + ct)
+
+alpha <- X
+for(rr in 1:length(simRes$alpha_gt)){
+  idGene <- names(simRes$alpha_gt)[rr]
+  if(is.na(simRes$alpha_gt[[rr]][1])) next
+  if(is.null(dim(simRes$alpha_gt[[rr]]))){
+    # non DE
+    idTF <- names(simRes$alpha_gt[[rr]])
+    alpha[cbind(idGene,idTF)] <- simRes$alpha_gt[[rr]]
+  } else {
+    # DE
+    idTF <- rownames(simRes$alpha_gt[[rr]])
+    alpha[cbind(idGene,idTF)] <- rowMeans(simRes$alpha_gt[[rr]]) * 100
+  }
+}
+# get true alpha for noisy GRN
+# alphaTrueNoisy <- cbind(alpha, XNoisy[,(ncol(X)+1):(ncol(X)+nNoiseTFs)])
+
+### regulon object for viper
+tfAll <- unlist(mapply(rep, colnames(X), each=colSums(X)))
+targetAll <- rownames(X)[unlist(apply(X,2, function(x) which(x > 0)))]
+alphaAll <- alpha[X>0] / max(alpha)
+dfReg <- data.frame(tf=tfAll,
+                 target=targetAll,
+                 mor=1,
+                 likelihood=alphaAll)
+dfReg <- dfReg[!duplicated(dfReg),]
+dfReg$tf <- as.character(dfReg$tf)
+dfReg$target <- as.character(dfReg$target)
+regulon <- dorothea:::df2regulon(dfReg)
+
+### genesets object for AUCell
+genesets = dfReg %>%
+  group_by(tf) %>%
+  summarise(geneset = list(GSEABase::GeneSet(target))) %>%
+  transmute(tf, geneset2 = pmap(., .f=function(tf, geneset, ...) {
+    setName(geneset) = tf
+    return(geneset)
+  })) %>%
+  deframe() %>%
+  GeneSetCollection()
+
+### truth object
+truth <- simRes$fcAll
+truth[simRes$fcAll == 1] <- FALSE
+truth[simRes$fcAll != 1] <- TRUE
+
+source('20201120_evaluateSimulatedDataset.R')
+```
+
+# Adding noise to GRN
+
+```{r}
+benchmarkDistances <- function(emRes,
+                               counts,
+                               X,
+                               U,
+                               cellGroups = NULL,
+                               contrast = "consecutive",
+                               deId = deId){
+  simple_auc <- function(TPR, FPR){
+    # function from https://blog.revolutionanalytics.com/2016/11/calculating-auc.html
+    # inputs already sorted, best scores first 
+    dFPR <- c(diff(FPR), 0)
+    dTPR <- c(diff(TPR), 0)
+    sum(TPR * dFPR) + sum(dTPR * dFPR)/2
+  }
+  
+  tfDistEuclid <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "Euclidean",
+                                    scaleDistance = FALSE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistEuclidScaled <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "Euclidean",
+                                    scaleDistance = TRUE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistL1 <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                 distance = "L1",
+                                 scaleDistance = FALSE,
+                                 cellGroups = cellGroups,
+                                contrast = contrast)
+  tfDistL1Scaled <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "L1",
+                                    scaleDistance = TRUE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistEuclid_tf <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "EuclideanTF",
+                                    scaleDistance = FALSE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistEuclidScaled_tf <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "EuclideanTF",
+                                    scaleDistance = TRUE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistL1_tf <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                 distance = "L1TF",
+                                 scaleDistance = FALSE,
+                                 cellGroups = cellGroups,
+                                contrast = contrast)
+  tfDistL1Scaled_tf <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "L1TF",
+                                    scaleDistance = TRUE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+  tfDistRank <- transfactor::tfDistance(activity = emRes,
+                                    counts = counts,
+                                    X = X,
+                                    U = U,
+                                    distance = "rank",
+                                    scaleDistance = FALSE,
+                                    cellGroups = cellGroups,
+                                    contrast = contrast)
+
+  ## Euclid
+  ooF <- order(tfDistEuclid, decreasing = TRUE)
+  tprEuclid <- cumsum(deId[ooF]) / sum(deId)
+  fprEuclid <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_euclid <- simple_auc(tprEuclid, fprEuclid)
+  ## Euclid scaled
+  ooF <- order(tfDistEuclidScaled, decreasing = TRUE)
+  tprEuclidScaled <- cumsum(deId[ooF]) / sum(deId)
+  fprEuclidScaled <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_euclidScaled <- simple_auc(tprEuclidScaled, fprEuclidScaled)
+  ## L1
+  ooF <- order(tfDistL1, decreasing = TRUE)
+  tprL1 <- cumsum(deId[ooF]) / sum(deId)
+  fprL1 <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_l1 <- simple_auc(tprL1, fprL1)
+  ## L1 scaled
+  ooF <- order(tfDistL1Scaled, decreasing = TRUE)
+  tprL1Scaled <- cumsum(deId[ooF]) / sum(deId)
+  fprL1Scaled <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_l1Scaled <- simple_auc(tprL1Scaled, fprL1Scaled)
+  ## Euclid TF
+  ooF <- order(tfDistEuclid_tf, decreasing = TRUE)
+  tprEuclid_tf <- cumsum(deId[ooF]) / sum(deId)
+  fprEuclid_tf <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_euclid_tf <- simple_auc(tprEuclid_tf, fprEuclid_tf)
+  ## Euclid scaled TF
+  ooF <- order(tfDistEuclidScaled_tf, decreasing = TRUE)
+  tprEuclidScaled_tf <- cumsum(deId[ooF]) / sum(deId)
+  fprEuclidScaled_tf <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_euclidScaled_tf <- simple_auc(tprEuclidScaled_tf, fprEuclidScaled_tf)
+  ## L1 TF
+  ooF <- order(tfDistL1_tf, decreasing = TRUE)
+  tprL1_tf <- cumsum(deId[ooF]) / sum(deId)
+  fprL1_tf <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_l1_tf <- simple_auc(tprL1_tf, fprL1_tf)
+  ## L1 scaled TF
+  ooF <- order(tfDistL1Scaled_tf, decreasing = TRUE)
+  tprL1Scaled_tf <- cumsum(deId[ooF]) / sum(deId)
+  fprL1Scaled_tf <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_l1Scaled_tf <- simple_auc(tprL1Scaled_tf, fprL1Scaled_tf)
+  ## ranks
+  ooF <- order(tfDistRank, decreasing = TRUE)
+  tprRank <- cumsum(deId[ooF]) / sum(deId)
+  fprRank <- cumsum(!deId[ooF]) / sum(!deId)
+  auc_rank <- simple_auc(tprRank, fprRank)
+  
+  
+  # par(bty='l')
+  # plot(x=fprEuclid, y=tprEuclid, type='l', col="black", xlab="FPR", ylab="TPR")
+  # lines(x=fprEuclidScaled, y=tprEuclidScaled, col="orange")
+  # lines(x=fprL1, y=tprL1, col="darkseagreen3")
+  # lines(x=fprL1Scaled, y=tprL1Scaled, col="steelblue")
+  # legend("bottomright", c("Euclid", "Euclid scaled", "L1", "L1 scaled"),
+  #        lty = 1, col=c("black", "orange", "darkseagreen3", "steelblue"),
+  #        bty="n")
+  aucs <- c(auc_euclid, auc_euclidScaled, auc_l1, auc_l1Scaled,
+            auc_euclid_tf, auc_euclidScaled_tf, auc_l1_tf, auc_l1Scaled_tf,
+            auc_rank)
+  names(aucs) <- c("Euclid", "Euclid scaled", "L1", "L1 scaled",
+                   "Euclid tf", "Euclid scaled tf", "L1 tf", "L1 scaled tf",
+                   "ranks")
+  return(aucs)
+}
+```
+
+
+## AUROC for 3 datasets in each setting.
+
+```{r}
+nNoiseTFGrid <- c(0, ncol(X), ncol(X)*2, ncol(X)*4) # 100% to 33.3% data-generating TFs
+nNoiseEdgeGrid <- c(-sum(X)/2, -sum(X)/4, 0, sum(X)*2, sum(X)*4) # -50% to +200% true links
+nIter <- 3
+# nNoiseTFGrid <- c(ncol(X)*2, ncol(X)*4) # 100% to 33.3% data-generating TFs
+# nNoiseEdgeGrid <- c(sum(X)*2, sum(X)*4) # -50% to +200% true links
+# nIter <- 2
+
+for(nnTF in 1:length(nNoiseTFGrid)){
+  nNoiseTFs <- nNoiseTFGrid[nnTF]
+  for(nnEdge in 1:length(nNoiseEdgeGrid)){
+    nNoiseEdges <- nNoiseEdgeGrid[nnEdge]
+    for(nn in 1:nIter){
+      set.seed(nn)
+      simRes <- simulateFromGRN_extended(X, 
+                                   G=G, 
+                                   nTF=nTF, 
+                                   nPerGroup=nPerGroup, 
+                                   shape_mu_t=shape_mu_t, 
+                                   scale_mu_t=scale_mu_t,
+                                   shape_lambda_gc=shape_lambda_gc,
+                                   scale_lambda_gc=scale_lambda_gc,
+                                   nCellTypes=nCellTypes, 
+                                   seed=nn,
+                                   magnitude_g=magnitude_g)
+      
+      XNoisy <- addNoiseToGRN(X = X,
+                          nNoiseTFs = nNoiseTFs,
+                          nNoiseEdges = nNoiseEdges,
+                          noiseProb = 3/nrow(X))
+      # truth
+      truthNoisy <- simRes$fcAll
+      truthNoisy[simRes$fcAll == 1] <- FALSE
+      truthNoisy[simRes$fcAll != 1] <- TRUE
+      truthNoisy <- rbind(truthNoisy, matrix(rep(FALSE, nNoiseTFs * ncol(simRes$fcAll)),
+                                             nrow = nNoiseTFs, ncol=ncol(simRes$fcAll)))
+      
+      ## filter if necessary
+      keepGene <- rowSums(XNoisy) > 0
+      counts <- simRes$Y[keepGene,]
+      curAlpha <- alpha[keepGene,]
+      XNoisy <- XNoisy[keepGene,]
+      keepTF <- colSums(XNoisy) > 0
+      truthNoisy <- truthNoisy[keepTF,]
+      
+      # get true alpha for noisy GRN
+      if(nNoiseTFs > 0){
+        alphaTrueNoisy <- cbind(curAlpha, XNoisy[,(ncol(X)+1):(ncol(X)+nNoiseTFs)])
+      } else {
+        alphaTrueNoisy <- curAlpha
+      }
+      XNoisy <- XNoisy[,keepTF]
+      alphaTrueNoisy <- alphaTrueNoisy[,keepTF]
+      alphaTrueNoisy[XNoisy == 0] <- 0
+      rownames(truthNoisy) <- colnames(XNoisy)
+      
+      poisLassoRes <- transfactor::estimateActivity(counts = counts,
+                                      X = XNoisy,
+                                      model = "poisson",
+                                      U = design,
+                                      verbose = FALSE,
+                                      plot = FALSE,
+                                      maxIter = 500,
+                                      epsilon=.1,
+                                      sparse = TRUE,
+                                      repressions = FALSE)
+    
+      curAUC <- benchmarkDistances(emRes = poisLassoRes,
+                     counts = counts,
+                     X = XNoisy,
+                     U = design,
+                     contrast = "consecutive",
+                     deId = truthNoisy[,1])
+      
+      curDfAUC <- data.frame(auc = curAUC,
+                             method = names(curAUC),
+                             noiseEdges = nNoiseEdges,
+                             noiseTFs = nNoiseTFs)
+      
+      if(nn == 1 & nnEdge == 1 & nnTF == 1){
+        dfAUCAll <- curDfAUC
+      } else {
+        dfAUCAll <- rbind(dfAUCAll, curDfAUC)
+      }
+    }
+  }
+}
+
+# date <- Sys.Date()
+# date <- gsub(x=date, pattern="-", replacement="")
+# saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAllDistances",date,".rds"))
+dfAUCAll <- readRDS("../objects/dfAUCAllDistances20210511.rds")
+dfAUCAll$method <- factor(dfAUCAll$method, 
+                          levels = c("Euclid", "Euclid tf",
+                                     "Euclid scaled", "Euclid scaled tf",
+                                     "L1", "L1 tf",
+                                     "L1 scaled", "L1 scaled tf",
+                                     "ranks"))
+dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
+dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
+ggplot(dfAUCAll, aes(x=method, y=auc)) +
+  geom_boxplot(aes(col=method)) +
+  facet_wrap(.~noiseTFs * noiseEdges,
+             ncol = length(nNoiseEdgeGrid),
+             nrow = length(nNoiseTFGrid)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=3) +
+  xlab("") + ylab("AUC")
+ggsave("../plots/aucDistancesAllSettings.pdf", width=12, height=9)
+```
