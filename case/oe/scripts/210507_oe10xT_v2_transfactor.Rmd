@@ -146,8 +146,6 @@ Y_ti_poisson <- transfactor::tfCounts(poisLassoRes$mu_gtc, as.matrix(counts), U)
 
 # TF activity heatmaps
 
-TODO: Difference between using `Y_tc` and `mu_tc`?
-
 ```{r, eval=TRUE}
 Y_tc_poisson <- Y_ti_poisson %*% U
 library(pheatmap)
@@ -891,6 +889,31 @@ pTF <- cowplot::plot_grid(plotlist=pTFList, labels=c("c"))
 pTF
 ggsave("plots/topTFsPoissonLasso.pdf")
 ```
+
+```{r tfPDF}
+ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
+topTFs <- names(tfDist_euclidConsecScaled[ooEuclidScaled[1:length(tfDist_euclidConsecScaled)]])
+pdf("../plots/allTFPlots.pdf")
+for(tt in 1:length(tfDist_euclidConsecScaled)){
+  curTF <- topTFs[tt]
+  curDF <- data.frame(bin=pt1Groups,
+                      contribution=pi_ti_poisson[curTF,])
+  print(ggplot(curDF, aes(x=bin, y=contribution, color=bin)) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values=wesanderson::wes_palette("Zissou1", nlevels(pt1Groups), "continuous")) +
+    theme(axis.text.x = element_blank(),
+        legend.position = "none",
+        axis.title = element_text(size=5),
+        axis.text.y = element_text(size=5),
+        title = element_text(size=8)) +
+    xlab("Pseudotime") +
+    ylab("Contribution") +
+    ggtitle(paste0(curTF,": distance = ",round(tfDist_euclidConsecScaled[ooEuclidScaled[tt]], 3))))
+}
+dev.off()
+```
+
 
 ## Dimensionality reduction
 
