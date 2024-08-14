@@ -1,3 +1,14 @@
+case/yeast/data/230613_poisRes_repr_design10Cells.rds
+case/oe/data/230621_poisLassoRes_repr_design10Cells.rds
+case/oe/plots_OEPaper
+case/oe/data_OEPaper*
+case/oe/scripts_original_oePaper*
+case/oe/data_230412*
+case/oldFiles*
+simulation/dirMultEstimation*
+identifiability*
+case/yeast/scripts/210607_yeastGRN_initialValues*
+simulation/simulateFromModel/210602_extendedGRNSimulation_initialValues*
 case/oe/data/pySCENIC_results/output1_grn.csv
 case/oe/data/poisLassoRes_repr_design10Cells.rds
 case/yeast/data/poisRes_repr_design10Cells.rds

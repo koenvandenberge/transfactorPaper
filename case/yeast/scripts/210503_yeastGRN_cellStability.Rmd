@@ -1,7 +1,6 @@
 ---
 title: "Yeast scRNA-seq TF KO"
 author: "Koen Van den Berge"
-date: "9/21/2020"
 output: html_document
 ---
 

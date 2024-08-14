@@ -83,13 +83,13 @@ poisRes_repr <- transfactor::estimateActivity(counts = counts,
                                               verbose = TRUE,
                                               plot = TRUE)
 
-saveRDS(poisRes_repr, file="../data/poisRes_repressions_transfactor.rds")
+saveRDS(poisRes_repr, file="../data/230613_poisRes_repressions_transfactor.rds")
 ```
 
 
 
 ```{r}
-poisRes_repr <- readRDS("../data/poisRes_repressions_transfactor.rds")
+poisRes_repr <- readRDS("../data/230613_poisRes_repressions_transfactor.rds")
 Y_ti <- transfactor::tfCounts(mu_gtc = poisRes_repr$mu_gtc, 
                        counts = counts, 
                        design = design)
@@ -123,7 +123,7 @@ pheatmap(mu_tc_scaled,
          annotation_col=annoCol, col=color,
          breaks=breaks, clustering_method =  "ward.D2")
 
-pdf("../plots/bigHeatmapTFActivity_v2.pdf", width=12, height=18)
+pdf("../plots/bigHeatmapTFActivity_v2_copyReproduc.pdf", width=12, height=18)
 pheatmap(mu_tc_scaled,
          show_rownames=TRUE, show_colnames=FALSE,
          annotation_col=annoCol, col=color,
@@ -325,7 +325,7 @@ poisRes_repr_design10 <- transfactor::estimateActivity(counts = counts,
                                                    sparse = FALSE,
                                                    repressions = TRUE)
 # converged after iteration 90. Log-lik: -94708908.558
-saveRDS(poisRes_repr_design10, file="../data/poisRes_repr_design10Cells.rds")
+saveRDS(poisRes_repr_design10, file="../data/230613_poisRes_repr_design10Cells.rds")
 ```
 
 
@@ -398,7 +398,7 @@ resAUCell <- resAUCell[colnames(X),]
 ## Dimensionality reduction
 
 ```{r}
-poisRes_repr_design10 <- readRDS("../data/poisRes_repr_design10Cells.rds")
+poisRes_repr_design10 <- readRDS("../data/230613_poisRes_repr_design10Cells.rds")
 library(scater)
 set.seed(44)
 pcViper <- scater::calculatePCA(x = viperRes,
@@ -474,11 +474,11 @@ pHeat <- pheatmap(mu_tc_scaled,
 pDiaux <- cowplot::plot_grid(plotlist = pListDiaux)
 pNitro <- cowplot::plot_grid(plotlist = pListNitro)
 
-saveRDS(pHeat, file="../plots/pHeatTFAct.rds")
-saveRDS(pDiaux, file="../plots/pDiaux.rds")
-saveRDS(pNitro, file="../plots/pNitro.rds")
-saveRDS(pDR, file="../plots/pDR.rds")
+saveRDS(pHeat, file="../plots/pHeatTFAct_copyReproduc.rds")
+saveRDS(pDiaux, file="../plots/pDiaux_copyReproduc.rds")
+saveRDS(pNitro, file="../plots/pNitro_copyReproduc.rds")
+saveRDS(pDR, file="../plots/pDR_copyReproduc.rds")
 
 cowplot::plot_grid(pHeat[[4]], pDiaux, pNitro, pDR, labels=letters[1:4])
-ggsave("../plots/compositeFigure.pdf", width=12, height=12)
+ggsave("../plots/compositeFigure_copyReproduc.pdf", width=12, height=12)
 ```

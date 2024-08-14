@@ -73,7 +73,7 @@ simulateFromGRN_extended <- function(X,
     mu_tc_id <- mu_tc_noise[id,,drop=FALSE]
     curDimNames <- list(paste0(colnames(X)[id], ";gene",gg),
                                 paste0("celltype",letters[1:nCellTypes]))
-    # simulate from Dirichlet.
+    
     curalpha_gt <- rowMeans(sweep(mu_tc_id, 2, colSums(mu_tc_id), "/")) * magnitude_g[gg]
     alpha_gt[[gg]] <- curalpha_gt
     curmu_gtc <- sweep(sweep(mu_tc_id, 2, colSums(mu_tc_id), "/"), 2, mu_gc_sim[gg,], "*")
@@ -203,15 +203,15 @@ alpha <- X
 for(rr in 1:length(simRes$alpha_gt)){
   idGene <- names(simRes$alpha_gt)[rr]
   if(is.na(simRes$alpha_gt[[rr]][1])) next
-  if(is.null(dim(simRes$alpha_gt[[rr]]))){
+#   if(is.null(dim(simRes$alpha_gt[[rr]]))){
     # non DE
     idTF <- names(simRes$alpha_gt[[rr]])
     alpha[cbind(idGene,idTF)] <- simRes$alpha_gt[[rr]]
-  } else {
-    # DE
-    idTF <- rownames(simRes$alpha_gt[[rr]])
-    alpha[cbind(idGene,idTF)] <- rowMeans(simRes$alpha_gt[[rr]]) * 100
-  }
+  # } else {
+  #   # DE
+  #   idTF <- rownames(simRes$alpha_gt[[rr]])
+  #   alpha[cbind(idGene,idTF)] <- rowMeans(simRes$alpha_gt[[rr]]) * 100
+  # }
 }
 # get true alpha for noisy GRN
 # alphaTrueNoisy <- cbind(alpha, XNoisy[,(ncol(X)+1):(ncol(X)+nNoiseTFs)])
@@ -318,8 +318,9 @@ for(nnTF in 1:length(nNoiseTFGrid)){
 pAllSettings <- cowplot::plot_grid(plotlist=pNoLeg, ncol = length(nNoiseEdgeGrid), nrow=length(nNoiseTFGrid))
 leg <- cowplot::get_legend(simEvalNoise$pAll)
 cowplot::plot_grid(pAllSettings, leg, nrow=1, rel_widths=c(1, .2))
-ggsave("../plots/rocModelAllSettings.pdf", width=12, height=12)
-ggsave("../plots/rocModelAllSettings.pdf", width=12, height=9)
+date <- Sys.Date()
+date <- gsub(x=date, pattern="-", replacement="")
+ggsave(paste0("../plots/",date,"rocModelAllSettings.pdf"), width=12, height=12)
 
 ```
 
@@ -407,10 +408,11 @@ for(nnTF in 1:length(nNoiseTFGrid)){
   }
 }
 
-# date <- Sys.Date()
-# date <- gsub(x=date, pattern="-", replacement="")
-# saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll",date,".rds"))
-dfAUCAll <- readRDS("../objects/dfAUCAll20210430.rds")
+date <- Sys.Date()
+date <- gsub(x=date, pattern="-", replacement="")
+saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll",date,".rds"))
+# dfAUCAll <- readRDS("../objects/dfAUCAll20230503.rds")
+# date <- 20230503
 dfAUCAll$method <- factor(dfAUCAll$method, levels = c("poisson", "poisson_lasso",
                                                       "dirMult", "dirMult_lasso",
                                                       "dirMult_alphaEst", "dirMult_lasso_alphaEst",
@@ -427,5 +429,6 @@ ggplot(dfAUCAll, aes(x=method, y=auc)) +
         axis.ticks.x = element_blank()) +
   scale_y_continuous(n.breaks=3) +
   xlab("") + ylab("AUC")
-ggsave("../plots/aucAllSettings.pdf", width=12, height=9)
+# ggsave("../plots/aucAllSettings.pdf", width=12, height=9)
+ggsave(paste0("../plots/",date,"aucAllSettings.pdf"), width=12, height=9)
 ```

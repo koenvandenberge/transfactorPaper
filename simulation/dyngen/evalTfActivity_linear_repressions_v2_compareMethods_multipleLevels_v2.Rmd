@@ -65,7 +65,7 @@ ksource <- function(x, ...) {
 library(transfactor)
 source('../simulateFromModel/20201120_evaluateSimulatedDataset.R')
 
-data <- readRDS("datasets/simIters/dataset1.rds")
+data <- readRDS("./datasets/simIters/dataset1.rds")
 model <- data[[1]]
 dataset <- data[[2]]
 
@@ -178,13 +178,13 @@ pt <- dataset$experiment$cell_info$sim_time
 ptGroups <- Hmisc::cut2(pt, cuts = quantile(pt, prob=seq(0,1,by=qSteps)))
 Xpt <- model.matrix(~0+ptGroups)
 design <- Xpt
-```    
+```
 
 
 ```{r, eval=TRUE}
 res <- evaluateSimulation_repressions(counts = countsAll,
                                design = design,
-                               X = XAll,
+                               X = XNoisy,
                               alpha = alphaTrueNoisy,
                               regulon = regulonNoisy,
                               genesets = genesetsNoisy,
@@ -204,13 +204,12 @@ res$dfAUC
 nNoiseTFGrid <- c(0, ncol(XAll), ncol(XAll)*2, ncol(XAll)*4) # 100% to 33.3% data-generating TFs
 nNoiseEdgeGrid <- c(-sum(abs(XAll))/2, -sum(abs(XAll))/4, 0, sum(abs(XAll))*2, sum(abs(XAll))*4) # -50% to +200% true links
 nIter <- 6
-#dfAUCAll <- readRDS("dfAUCAll_dyngen4.rds")
+
 
 
 pNoLeg <- list()
-for(nn in 1:nIter){
+for(nn in 2:nIter){
   # load a dataset
-  set.seed(nn*10)
   data <- readRDS(paste0("datasets/simIters/dataset",nn,".rds"))
   model <- data[[1]]
   dataset <- data[[2]]
@@ -218,6 +217,7 @@ for(nn in 1:nIter){
   for(nnTF in 1:length(nNoiseTFGrid)){
     nNoiseTFs <- nNoiseTFGrid[nnTF]
     for(nnEdge in 1:length(nNoiseEdgeGrid)){
+      set.seed(nn*10*nnTF*nnEdge)
       nNoiseEdges <- nNoiseEdgeGrid[nnEdge]
       countsAll <- t(as.matrix(dataset$experiment$counts_premrna + dataset$experiment$counts_mrna))
       
@@ -246,8 +246,8 @@ for(nn in 1:nIter){
         all(x == 0 | x == -1)
       })
       XAll <- XAll[,!tfsWithOnlyRepression]
-      barplot(table(rowSums(abs(XAll))))
-      barplot(table(colSums(abs(XAll))))
+      #barplot(table(rowSums(abs(XAll))))
+      #barplot(table(colSums(abs(XAll))))
       
       ## alpha
       alpha <- abs(XAll)
@@ -307,12 +307,14 @@ for(nn in 1:nIter){
                                     regulon = regulonNoisy,
                                     genesets = genesetsNoisy,
                                     truth = truthNoisy,
-                                    verbose = TRUE,
-                                    alphaScale = 1)
+                                    verbose = FALSE,
+                                    alphaScale = 1,
+                                    iterMax = 1000)
       
       curDfAUC <- res$dfAUC
       curDfAUC$noiseEdges <- nNoiseEdges
       curDfAUC$noiseTFs <- nNoiseTFs
+      curDfAUC$nn <- nn
       
       if(nn == 1 & nnEdge == 1 & nnTF == 1){
         dfAUCAll <- curDfAUC
@@ -333,12 +335,22 @@ saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll_dyngen",date,".rds"))
 ```
 
 ```{r}
-dfAUCAll1 <- readRDS("../objects/dfAUCAll_dyngen1.rds")
+for(nn in 1:6){
+  curdfAUC <- readRDS(paste0("../objects/dfAUCAll_dyngen",nn,".rds"))
+  curdfAUC$nn <- nn
+
+  if(nn==1){
+    dfAUCAll <- curdfAUC
+  } else {
+    dfAUCAll <- rbind(dfAUCAll, curdfAUC)
+  }
+}
 ```
 
 
+
 ```{r}
-dfAUCAll <- readRDS("../objects/dfAUCAll_dyngen20210502.rds")
+# dfAUCAll <- readRDS("../objects/dfAUCAll_dyngen20210502.rds")
 dfAUCAll$method <- factor(dfAUCAll$method, 
                           levels = c("poisson", "poisson_lasso", "poisson_lasso_repr",
                                      "dirMult", "dirMult_lasso", "dirMult_lasso_repr",

@@ -1,5 +1,5 @@
 ---
-title: "Yeast scRNA-seq TF KO"
+title: "Yeast scRNA-seq Network stability"
 author: "Koen Van den Berge"
 date: "9/21/2020"
 output: html_document
@@ -97,13 +97,13 @@ emDirMultRes <- transfactor::estimateActivity(counts = counts,
                               epsilon = 1,
                               sparse = FALSE,
                               repressions = TRUE)
-saveRDS(emDirMultRes, file="../data/emDirMultRes_repressions.rds")
+saveRDS(emDirMultRes, file="../data/230609_emDirMultRes_repressions.rds")
 ```
 
 # Heatmap of TF activity using confidence scores
 
 ```{r}
-emDirMultRes <- readRDS("../data/emDirMultRes_repressions.rds")
+emDirMultRes <- readRDS("../data/230609_emDirMultRes_repressions.rds")
 library(pheatmap)
 library(RColorBrewer)
 mu_tc <- emDirMultRes$mu_tc
@@ -235,7 +235,7 @@ pNitro <- cowplot::plot_grid(plotlist = pListNitro)
 
 ```{r}
 cowplot::plot_grid(pDiaux, pNitro, labels=letters[1:2])
-ggsave("../plots/nitroDiauxDirMult.pdf", width= 11, height=6)
+ggsave("../plots/230609nitroDiauxDirMult.pdf", width= 11, height=6)
 ```
 
 

@@ -38,10 +38,15 @@ glmGamPoiResultsInd <- function(counts, design){
   return(resList)
 }
 
-limmaResultsInd <- function(data, design){
+limmaResultsInd <- function(data, design, doVoom=FALSE){
   require(limma)
+  if(doVoom){
+    v <- voom(data, design)
+    fits <- limma::lmFit(v, design)
+  } else {
+    fits <- limma::lmFit(data, design)
+  }
   # test each cell type individually vs reference
-  fits <- limma::lmFit(data, design)
   contrast <- rep(0, ncol(design))
   resList <- list()
   for(kk in 1:(ncol(design)-1)){
@@ -68,10 +73,15 @@ limmaResultsInd <- function(data, design){
 # }
 
 
-limmaResultsAll <- function(data, design){
+limmaResultsAll <- function(data, design, doVoom=FALSE){
   require(limma)
+  if(doVoom){
+    v <- voom(data, design)
+    fits <- limma::lmFit(v, design)
+  } else {
+    fits <- limma::lmFit(data, design)
+  }
   # test each cell type individually vs reference
-  fits <- limma::lmFit(data, design)
   contrast.matrix <- matrix(0, nrow=ncol(design), ncol=ncol(design)-1,
                             dimnames = list(colnames(design),
                                             paste0(colnames(design)[-1],"-",colnames(design)[1])))
@@ -169,6 +179,18 @@ constructGenesets <- function(X, alpha){
     GeneSetCollection()
 }
 
+# for dev:
+# counts=simRes$Y
+# design=design
+# X=X
+# alpha=alpha
+# regulon=regulon
+# genesets=genesets
+# truth=truth
+# verbose=FALSE
+# alphaScale=1
+# allVoom=FALSE
+
 evaluateSimulation_noRepressions <- function(counts,
                                design,
                                X,
@@ -177,7 +199,8 @@ evaluateSimulation_noRepressions <- function(counts,
                                genesets,
                                truth,
                                verbose = FALSE,
-                               alphaScale = 1){
+                               alphaScale = 1,
+                               allVoom = FALSE){
 
 
   ## Poisson model
@@ -191,9 +214,11 @@ evaluateSimulation_noRepressions <- function(counts,
                                       epsilon = .1,
                                       sparse = FALSE,
                                       repressions = FALSE)
-  Y_ti_pois <- transfactor::tfCounts(poisRes$mu_gtc, counts, design)
+  Y_ti_pois <- transfactor::tfCounts(mu_gtc=poisRes$mu_gtc, pi_gtc=NULL, counts=counts, design=design)
   fTestGamPoi_pois <- glmGamPoiResultsAll(Y_ti_pois, design)
   indTestGamPoi_pois <- glmGamPoiResultsInd(Y_ti_pois, design)
+  fTestLimma_pois <- limmaResultsAll(Y_ti_pois, design, doVoom = TRUE)
+  indTestLimma_pois <- limmaResultsInd(Y_ti_pois, design, doVoom = TRUE)
 
   ## Dir-Mult model, known alpha
   dirMultRes_alphaKnown <- transfactor::estimateActivity(counts = counts,
@@ -208,25 +233,30 @@ evaluateSimulation_noRepressions <- function(counts,
                                                  alphaScale = alphaScale,
                                                  sparse = FALSE,
                                                  repressions = FALSE)
-  Y_ti_dirMult <- transfactor::tfCounts(dirMultRes_alphaKnown$mu_gtc, counts, design)
+  # Y_ti_dirMult <- transfactor::tfCounts(dirMultRes_alphaKnown$mu_gtc, counts, design)
+  Y_ti_dirMult <- transfactor::tfCounts(mu_gtc=NULL, pi_gtc=dirMultRes_alphaKnown$pi_gtc, counts=counts, design=design)
   fTestGamPoi_dirMult <- glmGamPoiResultsAll(Y_ti_dirMult, design)
   indTestGamPoi_dirMult <- glmGamPoiResultsInd(Y_ti_dirMult, design)
+  fTestLimma_dirMult <- limmaResultsAll(Y_ti_dirMult, design, doVoom = TRUE)
+  indTestLimma_dirMult <- limmaResultsInd(Y_ti_dirMult, design, doVoom = TRUE)
 
   ## Dir-Mult model, estimate alpha
   dirMultRes_alphaEst <- transfactor::estimateActivity(counts = counts,
                                                        X = X,
-                                                       model = "dirMultAlpha",
+                                                       model = "dirMulteBayes",
                                                        U = design,
                                                        verbose = verbose,
                                                        plot = FALSE,
                                                        maxIter = 500,
                                                        epsilon=.1,
-                                                       alphaScale = alphaScale,
+                                                       alphaScale = "none",
                                                        sparse = FALSE,
                                                        repressions = FALSE)
-  Y_ti_dirMult_alphaEst <- transfactor::tfCounts(dirMultRes_alphaEst$mu_gtc, counts, design)
+  Y_ti_dirMult_alphaEst <- transfactor::tfCounts(mu_gtc=NULL,pi_gtc=dirMultRes_alphaEst$pi_gtc, counts=counts, design=design)
   fTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst, design)
   indTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst, design)
+  fTestLimma_dirMult_alphaEst <- limmaResultsAll(Y_ti_dirMult_alphaEst, design, doVoom = TRUE)
+  indTestLimma_dirMult_alphaEst <- limmaResultsInd(Y_ti_dirMult_alphaEst, design, doVoom = TRUE)
 
   ## Poisson model, lasso
   poisResLasso <- transfactor::estimateActivity(counts = counts,
@@ -239,9 +269,11 @@ evaluateSimulation_noRepressions <- function(counts,
                                                 epsilon=.1,
                                                 sparse = TRUE,
                                                 repressions = FALSE)
-  Y_ti_poisLasso <- transfactor::tfCounts(poisResLasso$mu_gtc, counts, design)
+  Y_ti_poisLasso <- transfactor::tfCounts(pi_gtc=NULL, mu_gtc=poisResLasso$mu_gtc, counts=counts, design=design)
   fTestGamPoi_poisLasso <- glmGamPoiResultsAll(Y_ti_poisLasso, design)
   indTestGamPoi_poisLasso <- glmGamPoiResultsInd(Y_ti_poisLasso, design)
+  fTestLimma_poisLasso <- limmaResultsAll(Y_ti_poisLasso, design, doVoom = TRUE)
+  indTestLimma_poisLasso <- limmaResultsInd(Y_ti_poisLasso, design, doVoom = TRUE)
 
   ## Dir-Mult model, known alpha, lasso
   dirMultRes_alphaKnown_lasso <- transfactor::estimateActivity(counts = counts,
@@ -256,24 +288,29 @@ evaluateSimulation_noRepressions <- function(counts,
                                                                alphaScale = alphaScale,
                                                                sparse = TRUE,
                                                                repressions = FALSE)
-  Y_ti_dirMultLasso <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso$mu_gtc, counts, design)
+  Y_ti_dirMultLasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown_lasso$pi_gtc, mu_gtc=NULL, counts=counts, design=design)
   fTestGamPoi_dirMultLasso <- glmGamPoiResultsAll(Y_ti_dirMultLasso, design)
   indTestGamPoi_dirMultLasso <- glmGamPoiResultsInd(Y_ti_dirMultLasso, design)
+  fTestLimma_dirMultLasso <- limmaResultsAll(Y_ti_dirMultLasso, design, doVoom = TRUE)
+  indTestLimma_dirMultLasso <- limmaResultsInd(Y_ti_dirMultLasso, design, doVoom = TRUE)
 
   ## Dir-Mult model, estimate alpha, lasso
   dirMultRes_alphaEst_lasso <- transfactor::estimateActivity(counts = counts,
                                                               X = X,
-                                                             model = "dirMultAlpha",
+                                                             model = "dirMulteBayes",
                                                               U = design,
                                                               verbose = verbose,
+                                                             alphaScale = "none",
                                                               plot = FALSE,
                                                               maxIter = 500,
                                                               epsilon = .1,
                                                               sparse = TRUE,
                                                               repressions = FALSE)
-  Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(dirMultRes_alphaEst_lasso$mu_gtc, counts, design)
+  Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst_lasso$pi_gtc, mu_gtc=NULL, counts, design)
   fTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso, design)
   indTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso, design)
+  fTestLimma_dirMult_alphaEst_lasso <- limmaResultsAll(Y_ti_dirMult_alphaEst_lasso, design, doVoom = TRUE)
+  indTestLimma_dirMult_alphaEst_lasso <- limmaResultsInd(Y_ti_dirMult_alphaEst_lasso, design, doVoom = TRUE)
 
   ## viper
   viperRes <- viper(counts,
@@ -392,7 +429,11 @@ evaluateSimulation_noRepressions <- function(counts,
   deId <- truth[,1]
 
   # poisson
-  ooF <- order(fTestGamPoi_pois$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_pois$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_pois$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   df <- data.frame(tpr=tpr,
@@ -401,7 +442,11 @@ evaluateSimulation_noRepressions <- function(counts,
   auc_pois <- simple_auc(tpr, fpr)
 
   # poisson,  lasso
-  ooF <- order(fTestGamPoi_poisLasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_poisLasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_poisLasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -412,7 +457,11 @@ evaluateSimulation_noRepressions <- function(counts,
 
 
   # dirMult
-  ooF <- order(fTestGamPoi_dirMult$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -422,7 +471,11 @@ evaluateSimulation_noRepressions <- function(counts,
   auc_dirMult <- simple_auc(tpr, fpr)
 
   # dirMult,  lasso
-  ooF <- order(fTestGamPoi_dirMultLasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMultLasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMultLasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -432,7 +485,11 @@ evaluateSimulation_noRepressions <- function(counts,
   auc_dirMultLasso <- simple_auc(tpr, fpr)
 
   # dirMult, est alpha
-  ooF <- order(fTestGamPoi_dirMult_alphaEst$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult_alphaEst$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult_alphaEst$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -442,7 +499,11 @@ evaluateSimulation_noRepressions <- function(counts,
   auc_dirMult_alphaEst <- simple_auc(tpr, fpr)
 
   # dirMult, est alpha, lasso
-  ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult_alphaEst_lasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -510,7 +571,7 @@ evaluateSimulation_noRepressions <- function(counts,
 # truth = truthNoisy
 # verbose = TRUE
 # alphaScale = 1
-# iterMax = 500
+# iterMax = 1000
 
 evaluateSimulation_repressions <- function(counts,
                                             design,
@@ -547,7 +608,7 @@ evaluateSimulation_repressions <- function(counts,
                                       epsilon=.1,
                                       sparse = FALSE,
                                       repressions = FALSE)
-  Y_ti_pois <- transfactor::tfCounts(poisRes$mu_gtc, countsPos, design)
+  Y_ti_pois <- transfactor::tfCounts(mu_gtc=poisRes$mu_gtc, pi_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_pois <- glmGamPoiResultsAll(Y_ti_pois, design)
   indTestGamPoi_pois <- glmGamPoiResultsInd(Y_ti_pois, design)
 
@@ -564,22 +625,23 @@ evaluateSimulation_repressions <- function(counts,
                                                  alphaScale = alphaScale,
                                                  sparse = FALSE,
                                                  repressions = FALSE)
-  Y_ti_dirMult <- transfactor::tfCounts(dirMultRes_alphaKnown$mu_gtc, countsPos, design)
+  Y_ti_dirMult <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult <- glmGamPoiResultsAll(Y_ti_dirMult, design)
   indTestGamPoi_dirMult <- glmGamPoiResultsInd(Y_ti_dirMult, design)
 
   ## Dir-Mult model, estimate alpha
   dirMultRes_alphaEst <- transfactor::estimateActivity(counts = countsPos,
                                                        X = XPos,
-                                                       model = "dirMultAlpha",
+                                                       model = "dirMulteBayes",
                                                        U = design,
                                                        verbose = verbose,
                                                        plot = FALSE,
                                                        maxIter = iterMax,
                                                        epsilon=.1,
                                                        sparse = FALSE,
-                                                       repressions = FALSE)
-  Y_ti_dirMult_alphaEst <- transfactor::tfCounts(dirMultRes_alphaEst$mu_gtc, countsPos, design)
+                                                       repressions = FALSE,
+                                                       alphaScale = "none")
+  Y_ti_dirMult_alphaEst <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst, design)
   indTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst, design)
 
@@ -594,7 +656,7 @@ evaluateSimulation_repressions <- function(counts,
                                                              epsilon=.1,
                                                              sparse = TRUE,
                                                              repressions = FALSE)
-  Y_ti_poisLasso <- transfactor::tfCounts(poisResLasso$mu_gtc, countsPos, design)
+  Y_ti_poisLasso <- transfactor::tfCounts(mu_gtc=poisResLasso$mu_gtc, pi_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_poisLasso <- glmGamPoiResultsAll(Y_ti_poisLasso, design)
   indTestGamPoi_poisLasso <- glmGamPoiResultsInd(Y_ti_poisLasso, design)
 
@@ -611,22 +673,23 @@ evaluateSimulation_repressions <- function(counts,
                                                                alphaScale = alphaScale,
                                                                sparse = TRUE,
                                                                repressions = FALSE)
-  Y_ti_dirMult_lasso <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso$mu_gtc, countsPos, design)
+  Y_ti_dirMult_lasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown_lasso$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMultLasso <- glmGamPoiResultsAll(Y_ti_dirMult_lasso, design)
   indTestGamPoi_dirMultLasso <- glmGamPoiResultsInd(Y_ti_dirMult_lasso, design)
 
   ## Dir-Mult model, estimate alpha, lasso
   dirMultRes_alphaEst_lasso <- transfactor::estimateActivity(counts = countsPos,
                                                             X = XPos,
-                                                            model = "dirMultAlpha",
+                                                            model = "dirMulteBayes",
                                                             U = design,
                                                             verbose = verbose,
                                                             plot = FALSE,
                                                             maxIter = iterMax,
                                                             epsilon = .1,
                                                             sparse = TRUE,
-                                                            repressions = FALSE)
-  Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(dirMultRes_alphaEst_lasso$mu_gtc, countsPos, design)
+                                                            repressions = FALSE,
+                                                            alphaScale = "none")
+  Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst_lasso$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso, design)
   indTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso, design)
 
@@ -641,7 +704,7 @@ evaluateSimulation_repressions <- function(counts,
                                                      epsilon=.1,
                                                      sparse = TRUE,
                                                      repressions = TRUE)
-  Y_ti_poisLasso_repr <- transfactor::tfCounts(poisResLasso_repr$mu_gtc, counts, design)
+  Y_ti_poisLasso_repr <- transfactor::tfCounts(mu_gtc=poisResLasso_repr$mu_gtc, pi_gtc=NULL, counts=counts, design=design)
   fTestGamPoi_poisLasso_repr <- glmGamPoiResultsAll(Y_ti_poisLasso_repr, design)
   indTestGamPoi_poisLasso_repr <- glmGamPoiResultsInd(Y_ti_poisLasso_repr, design)
 
@@ -659,22 +722,23 @@ evaluateSimulation_repressions <- function(counts,
                                                                     alphaScale = alphaScale,
                                                                     sparse = TRUE,
                                                                     repressions = TRUE)
-  Y_ti_dirMultLasso_repr <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso_repr$mu_gtc, counts, design)
+  Y_ti_dirMultLasso_repr <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown_lasso_repr$pi_gtc, mu_gtc=NULL, counts=counts[rownames(dirMultRes_alphaKnown_lasso_repr$countsSufStats),], design=design)
   fTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsAll(Y_ti_dirMultLasso_repr, design)
   indTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsInd(Y_ti_dirMultLasso_repr, design)
 
   ## Dir-Mult model, estimate alpha, lasso, repressions
   dirMultRes_alphaEst_lasso_repr <- transfactor::estimateActivity(counts = counts,
                                                                   X = X,
-                                                                  model = "dirMultAlpha",
+                                                                  model = "dirMulteBayes",
                                                                   U = design,
                                                                   verbose = verbose,
                                                                   plot = FALSE,
                                                                   maxIter = iterMax,
                                                                   epsilon = .1,
                                                                   sparse = TRUE,
-                                                                  repressions = TRUE)
-  Y_ti_dirMult_alphaEst_lasso_repr <- transfactor::tfCounts(dirMultRes_alphaEst_lasso_repr$mu_gtc, counts, design)
+                                                                  repressions = TRUE,
+                                                                  alphaScale = "none")
+  Y_ti_dirMult_alphaEst_lasso_repr <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst_lasso_repr$pi_gtc, mu_gtc=NULL, counts=counts[rownames(dirMultRes_alphaEst_lasso_repr$countsSufStats),], design=design)
   fTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso_repr, design)
   indTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso_repr, design)
 
@@ -845,3 +909,512 @@ evaluateSimulation_repressions <- function(counts,
               dfAUC = dfAUC))
 }
 
+
+
+evaluateSimulation_repressions_reprOffset <- function(counts,
+                                           design,
+                                           X,
+                                           alpha,
+                                           regulon,
+                                           genesets,
+                                           truth,
+                                           verbose = FALSE,
+                                           alphaScale = 1,
+                                           iterMax = 500){
+
+  XPos <- X
+  XPos[XPos == -1] <- 0
+  alphaPos <- alpha
+  alphaPos[XPos == 0] <- 0
+  keepXPosRow <- rowSums(XPos) > 0
+  XPos <- XPos[keepXPosRow,]
+  alphaPos <- alphaPos[keepXPosRow,]
+  keepXPosCol <- colSums(XPos)>0
+  XPos <- XPos[,keepXPosCol]
+  alphaPos <- alphaPos[,keepXPosCol]
+  countsPos <- counts[rownames(XPos),]
+
+
+
+  ## Poisson model, lasso, repressions
+  poisResLasso_repr <- transfactor::estimateActivity(counts = counts,
+                                                     X = X,
+                                                     model = "poisson",
+                                                     U = design,
+                                                     verbose = verbose,
+                                                     plot = FALSE,
+                                                     maxIter = iterMax,
+                                                     epsilon=.1,
+                                                     sparse = TRUE,
+                                                     repressions = TRUE)
+  Y_ti_poisLasso_repr <- transfactor::tfCounts(poisResLasso_repr$mu_gtc, counts, design)
+  fTestGamPoi_poisLasso_repr <- glmGamPoiResultsAll(Y_ti_poisLasso_repr, design)
+  indTestGamPoi_poisLasso_repr <- glmGamPoiResultsInd(Y_ti_poisLasso_repr, design)
+
+  ## Poisson model, lasso, repressions without offset
+  poisResLasso_repr_noOffset <- transfactor::estimateActivity(counts = counts,
+                                                     X = X,
+                                                     model = "poisson",
+                                                     U = design,
+                                                     verbose = verbose,
+                                                     plot = FALSE,
+                                                     maxIter = iterMax,
+                                                     epsilon=.1,
+                                                     sparse = TRUE,
+                                                     repressions = TRUE,
+                                                     repressionOffset = FALSE)
+  Y_ti_poisLasso_repr_noOffset <- transfactor::tfCounts(poisResLasso_repr_noOffset$mu_gtc, counts, design)
+  fTestGamPoi_poisLasso_repr_noOffset <- glmGamPoiResultsAll(Y_ti_poisLasso_repr_noOffset, design)
+  indTestGamPoi_poisLasso_repr_noOffset <- glmGamPoiResultsInd(Y_ti_poisLasso_repr_noOffset, design)
+
+  ## Dir-Mult model, known alpha, lasso, repressions
+  dirMultRes_alphaKnown_lasso_repr <- transfactor::estimateActivity(counts = counts,
+                                                                    X = X,
+                                                                    model = "dirMult",
+                                                                    alpha = alpha,
+                                                                    rho_t = NULL,
+                                                                    U = design,
+                                                                    verbose = verbose,
+                                                                    plot = FALSE,
+                                                                    maxIter = iterMax,
+                                                                    epsilon=.1,
+                                                                    alphaScale = alphaScale,
+                                                                    sparse = TRUE,
+                                                                    repressions = TRUE)
+  Y_ti_dirMultLasso_repr <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso_repr$mu_gtc, counts, design)
+  fTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsAll(Y_ti_dirMultLasso_repr, design)
+  indTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsInd(Y_ti_dirMultLasso_repr, design)
+
+  ## Dir-Mult model, known alpha, lasso, repressions without offset
+  dirMultRes_alphaKnown_lasso_repr_noOffset <- transfactor::estimateActivity(counts = counts,
+                                                                    X = X,
+                                                                    model = "dirMult",
+                                                                    alpha = alpha,
+                                                                    rho_t = NULL,
+                                                                    U = design,
+                                                                    verbose = verbose,
+                                                                    plot = FALSE,
+                                                                    maxIter = iterMax,
+                                                                    epsilon=.1,
+                                                                    alphaScale = alphaScale,
+                                                                    sparse = TRUE,
+                                                                    repressions = TRUE,
+                                                                    repressionOffset = FALSE)
+  Y_ti_dirMultLasso_repr_noOffset <- transfactor::tfCounts(dirMultRes_alphaKnown_lasso_repr_noOffset$mu_gtc, counts, design)
+  fTestGamPoi_dirMultLasso_repr_noOffset <- glmGamPoiResultsAll(Y_ti_dirMultLasso_repr_noOffset, design)
+  indTestGamPoi_dirMultLasso_repr_noOffset <- glmGamPoiResultsInd(Y_ti_dirMultLasso_repr_noOffset, design)
+
+
+  ## viper
+  viperRes <- viper(counts,
+                    regulon,
+                    nes = TRUE,
+                    method = "scale",
+                    minsize = 2,
+                    eset.filter = F,
+                    adaptive.size = F)
+  viperRes <- viperRes[colnames(X)[colnames(X) %in% rownames(viperRes)],]
+  indTestLimma_viper <- limmaResultsInd(viperRes, design)
+  fTestLimma_viper <- limmaResultsAll(viperRes, design)
+
+  ## AUCell
+  obj <- AUCell_buildRankings(t(scale(t(counts))), nCores=1, plotStats = F, verbose = F) %>%
+    AUCell_calcAUC(genesets, ., verbose=F)
+  resAUCell <- AUCell::getAUC(obj)
+  resAUCell <- resAUCell[colnames(X),]
+  indTestLimma_AUCell <- limmaResultsInd(resAUCell, design)
+  fTestLimma_AUCell <- limmaResultsAll(resAUCell, design)
+
+  ## ROC curves across all cell types
+  deId <- truth[,1]
+
+
+  # poisson,  lasso, repressions
+  ooF <- order(fTestGamPoi_poisLasso_repr$f_statistic, decreasing = TRUE)
+  tpr <- cumsum(deId[ooF]) / sum(deId)
+  fpr <- cumsum(!deId[ooF]) / sum(!deId)
+  df <- data.frame(tpr=tpr,
+                   fpr=fpr,
+                   method="poisson_lasso_repr")
+  auc_poisLasso_repr <- simple_auc(tpr, fpr)
+
+
+  # poisson,  lasso, repressions without offset
+  ooF <- order(fTestGamPoi_poisLasso_repr_noOffset$f_statistic, decreasing = TRUE)
+  tpr <- cumsum(deId[ooF]) / sum(deId)
+  fpr <- cumsum(!deId[ooF]) / sum(!deId)
+  curDf <- data.frame(tpr=tpr,
+                      fpr=fpr,
+                      method="poisson_lasso_repr_noOffset")
+  df <- rbind(df, curDf)
+  auc_poisLasso_repr_noOffset <- simple_auc(tpr, fpr)
+
+  # dirMult,  lasso, repressions
+  ooF <- order(fTestGamPoi_dirMultLasso_repr$f_statistic, decreasing = TRUE)
+  tpr <- cumsum(deId[ooF]) / sum(deId)
+  fpr <- cumsum(!deId[ooF]) / sum(!deId)
+  curDf <- data.frame(tpr=tpr,
+                      fpr=fpr,
+                      method="dirMult_lasso_repr")
+  df <- rbind(df, curDf)
+  auc_dirMultLasso_repr <- simple_auc(tpr, fpr)
+
+  # dirMult,  lasso, repressions without offset
+  ooF <- order(fTestGamPoi_dirMultLasso_repr_noOffset$f_statistic, decreasing = TRUE)
+  tpr <- cumsum(deId[ooF]) / sum(deId)
+  fpr <- cumsum(!deId[ooF]) / sum(!deId)
+  curDf <- data.frame(tpr=tpr,
+                      fpr=fpr,
+                      method="dirMult_lasso_repr_noOffset")
+  df <- rbind(df, curDf)
+  auc_dirMultLasso_repr_noOffset <- simple_auc(tpr, fpr)
+
+  # viper
+  ooVip <- order(abs(fTestLimma_viper$F), decreasing = TRUE)
+  tpr <- cumsum(deId[ooVip]) / sum(deId)
+  fpr <- cumsum(!deId[ooVip]) / sum(!deId)
+  curDf <- data.frame(tpr=tpr,
+                      fpr=fpr,
+                      method="viper")
+  df <- rbind(df, curDf)
+  auc_viper <- simple_auc(tpr, fpr)
+
+  # AUCell
+  ooAUC <- order(abs(fTestLimma_AUCell$F), decreasing = TRUE)
+  tpr <- cumsum(deId[ooAUC]) / sum(deId)
+  fpr <- cumsum(!deId[ooAUC]) / sum(!deId)
+  curDf <- data.frame(tpr=tpr,
+                      fpr=fpr,
+                      method="AUCell")
+  df <- rbind(df, curDf)
+  auc_AUCell <- simple_auc(tpr, fpr)
+
+  pAll <- ggplot(df, aes(x=fpr, y=tpr, gorup=method, col=method)) +
+    geom_path() +
+    theme_classic()
+
+  dfAUC <- data.frame(auc = c(auc_poisLasso_repr,
+                              auc_poisLasso_repr_noOffset,
+                              auc_dirMultLasso_repr,
+                              auc_dirMultLasso_repr_noOffset,
+                              auc_viper,
+                              auc_AUCell),
+                      method = c("poisson_lasso_repr",
+                                 "poisson_lasso_repr_noOffset",
+                                 "dirMult_lasso_repr",
+                                 "dirMult_lasso_repr_noOffset",
+                                 "viper",
+                                 "AUCell"))
+
+
+  return(list(#plistInd = plistInd,
+    #dfIndAll = dfIndAll,
+    dfAll = df,
+    pAll = pAll,
+    dfAUC = dfAUC))
+}
+
+
+
+
+
+
+# counts = counts
+# design = design
+# XNoisy = XNoisy
+# alpha = alphaTrueNoisy
+# truth = truthNoisy
+# simRes = simRes
+# alphaScale = 1
+# verbose = FALSE
+# allVoom = FALSE
+# XTrue = XTrue
+# nNoiseEdges = nNoiseEdges
+
+evaluateSimulation_noRepressions_MSE <- function(counts,
+                                             design,
+                                             XNoisy,
+                                             alpha,
+                                             truth,
+                                             simRes,
+                                             verbose = FALSE,
+                                             alphaScale = 1,
+                                             returnAll = FALSE,
+                                             returnMutc = FALSE,
+                                             XTrue,
+                                             nNoiseEdges){
+
+
+  ## Poisson model
+  poisRes <- transfactor::estimateActivity(counts = counts,
+                                           X = XNoisy,
+                                           model = "poisson",
+                                           U = design,
+                                           verbose = verbose,
+                                           plot = FALSE,
+                                           maxIter = 500,
+                                           epsilon = .1,
+                                           sparse = FALSE,
+                                           repressions = FALSE)
+  sharedTF <- intersect(rownames(poisRes$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_pois <- mean((poisRes$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    stopifnot(mean(trueLinks %in% rownames(poisRes$mu_gtc)) == 1)
+    mu_gtc_trueLinks <- poisRes$mu_gtc[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_pois_true <- mean((mu_tc_trueLinks[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+  ## Dir-Mult model, known alpha
+  dirMultRes_alphaKnown <- transfactor::estimateActivity(counts = counts,
+                                                         X = XNoisy,
+                                                         model = "dirMult",
+                                                         alpha = alpha,
+                                                         U = design,
+                                                         verbose = verbose,
+                                                         plot = FALSE,
+                                                         maxIter = 500,
+                                                         epsilon=.1,
+                                                         alphaScale = alphaScale,
+                                                         sparse = FALSE,
+                                                         repressions = FALSE)
+  sharedTF <- intersect(rownames(dirMultRes_alphaKnown$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_dirMult <- mean((dirMultRes_alphaKnown$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    mugtcOld <- transfactor:::mugtcNewToOld(dirMultRes_alphaKnown$mu_gtc, design, XNoisy)
+    stopifnot(mean(trueLinks %in% rownames(mugtcOld)) == 1)
+    mu_gtc_trueLinks <- mugtcOld[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks_alphaKnown <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_dirMult_alphaKnown_true <- mean((mu_tc_trueLinks_alphaKnown[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+
+  ## Dir-Mult model, estimate alpha
+  dirMultRes_alphaEst <- transfactor::estimateActivity(counts = counts,
+                                                       X = XNoisy,
+                                                       model = "dirMulteBayes",
+                                                       U = design,
+                                                       verbose = verbose,
+                                                       plot = FALSE,
+                                                       maxIter = 500,
+                                                       epsilon=.1,
+                                                       alphaScale = "none",
+                                                       sparse = FALSE,
+                                                       repressions = FALSE)
+
+  sharedTF <- intersect(rownames(dirMultRes_alphaEst$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_dirMult_alphaEst <- mean((dirMultRes_alphaEst$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    mugtcOld <- transfactor:::mugtcNewToOld(dirMultRes_alphaEst$mu_gtc, design, XNoisy)
+    stopifnot(mean(trueLinks %in% rownames(mugtcOld)) == 1)
+    mu_gtc_trueLinks <- mugtcOld[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks_alphaEst <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_dirMult_alphaEst_true <- mean((mu_tc_trueLinks_alphaEst[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+
+  ## Poisson model, lasso
+  poisResLasso <- transfactor::estimateActivity(counts = counts,
+                                                X = XNoisy,
+                                                model = "poisson",
+                                                U = design,
+                                                verbose = verbose,
+                                                plot = FALSE,
+                                                maxIter = 500,
+                                                epsilon=.1,
+                                                sparse = TRUE,
+                                                repressions = FALSE)
+  sharedTF <- intersect(rownames(poisResLasso$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_poisLasso <- mean((poisResLasso$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    stopifnot(mean(trueLinks %in% rownames(poisResLasso$mu_gtc)) == 1)
+    mu_gtc_trueLinks <- poisResLasso$mu_gtc[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks_lasso <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_poisLasso_true <- mean((mu_tc_trueLinks[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+  ## Dir-Mult model, known alpha, lasso
+  dirMultRes_alphaKnown_lasso <- transfactor::estimateActivity(counts = counts,
+                                                               X = XNoisy,
+                                                               model = "dirMult",
+                                                               alpha = alpha,
+                                                               U = design,
+                                                               verbose = verbose,
+                                                               plot = FALSE,
+                                                               maxIter = 500,
+                                                               epsilon=.1,
+                                                               alphaScale = alphaScale,
+                                                               sparse = TRUE,
+                                                               repressions = FALSE)
+  sharedTF <- intersect(rownames(dirMultRes_alphaKnown_lasso$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_dirMult_alphaKnown_lasso <- mean((dirMultRes_alphaKnown_lasso$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    mugtcOld <- transfactor:::mugtcNewToOld(dirMultRes_alphaKnown_lasso$mu_gtc, design, XNoisy)
+    stopifnot(mean(trueLinks %in% rownames(mugtcOld)) == 1)
+    mu_gtc_trueLinks <- mugtcOld[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks_alphaKnown_lasso <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_dirMult_alphaKnown_lasso_true <- mean((mu_tc_trueLinks_alphaKnown_lasso[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+  ## Dir-Mult model, estimate alpha, lasso
+  dirMultRes_alphaEst_lasso <- transfactor::estimateActivity(counts = counts,
+                                                             X = XNoisy,
+                                                             model = "dirMulteBayes",
+                                                             alphaScale = "none",
+                                                             U = design,
+                                                             verbose = verbose,
+                                                             plot = FALSE,
+                                                             maxIter = 500,
+                                                             epsilon = .1,
+                                                             sparse = TRUE,
+                                                             repressions = FALSE)
+  sharedTF <- intersect(rownames(dirMultRes_alphaEst_lasso$mu_tc), rownames(simRes$mu_tc))
+  mseMutc_dirMult_alphaEst_lasso <- mean((dirMultRes_alphaEst_lasso$mu_tc[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  if(nNoiseEdges > 0){
+    ### subset mu_gtc based on only true links
+    tfNames <- colnames(XTrue)
+    trueID <- dayjob::elementToRowCol(element=which(XTrue == 1), nrows=nrow(XTrue), ncols = ncol(XTrue))
+    trueLinks <- paste0(colnames(XTrue)[trueID[,2]],";",rownames(XTrue)[trueID[,1]])
+    mugtcOld <- transfactor:::mugtcNewToOld(dirMultRes_alphaEst_lasso$mu_gtc, design, XNoisy)
+    stopifnot(mean(trueLinks %in% rownames(mugtcOld)) == 1)
+    mu_gtc_trueLinks <- mugtcOld[trueLinks,]
+    tfRows <- unlist(lapply(strsplit(rownames(mu_gtc_trueLinks), split=";"), "[[", 1))
+    mu_tc_trueLinks_alphaEst_lasso <- t(sapply(unique(tfNames), function(curTF){
+      tfid <- which(tfRows == curTF)
+      colMeans(mu_gtc_trueLinks[tfid,,drop=FALSE])
+    }))
+    mseMutc_dirMult_alphaEst_lasso_true <- mean((mu_tc_trueLinks_alphaEst_lasso[sharedTF,] - simRes$mu_tc[sharedTF,])^2)
+  }
+
+
+  if(!returnAll & !returnMutc){
+    if(nNoiseEdges > 0){
+      dfMSEAllEdges <- data.frame(mse = c(mseMutc_pois,
+                                  mseMutc_dirMult,
+                                  mseMutc_dirMult_alphaEst,
+                                  mseMutc_poisLasso,
+                                  mseMutc_dirMult_alphaKnown_lasso,
+                                  mseMutc_dirMult_alphaEst_lasso),
+                          method = c("poisson",
+                                     "dirMult",
+                                     "dirMult_alphaEst",
+                                     "poisson_lasso",
+                                     "dirMult_lasso",
+                                     "dirMult_lasso_alphaEst"),
+                          onlyTrue=FALSE)
+      dfMSEOnlyTrue <- data.frame(mse = c(mseMutc_pois_true,
+                                          mseMutc_dirMult_alphaKnown_true,
+                                          mseMutc_dirMult_alphaEst_true,
+                                          mseMutc_poisLasso_true,
+                                          mseMutc_dirMult_alphaKnown_lasso_true,
+                                          mseMutc_dirMult_alphaEst_lasso_true),
+                                  method = c("poisson",
+                                             "dirMult",
+                                             "dirMult_alphaEst",
+                                             "poisson_lasso",
+                                             "dirMult_lasso",
+                                             "dirMult_lasso_alphaEst"),
+                                  onlyTrue=TRUE)
+      dfMSE <- rbind(dfMSEAllEdges, dfMSEOnlyTrue)
+    } else {
+      dfMSE <- data.frame(mse = c(mseMutc_pois,
+                                  mseMutc_dirMult,
+                                  mseMutc_dirMult_alphaEst,
+                                  mseMutc_poisLasso,
+                                  mseMutc_dirMult_alphaKnown_lasso,
+                                  mseMutc_dirMult_alphaEst_lasso),
+                          method = c("poisson",
+                                     "dirMult",
+                                     "dirMult_alphaEst",
+                                     "poisson_lasso",
+                                     "dirMult_lasso",
+                                     "dirMult_lasso_alphaEst"),
+                          onlyTrue = FALSE)
+    }
+    return(dfMSE)
+  } else if(returnAll){
+    allRes <- list("poisson"=poisRes,
+                   "dirMult"=dirMultRes_alphaKnown,
+                   "dirMult_alphaEst"=dirMultRes_alphaEst,
+                   "poisson_lasso"=poisResLasso,
+                   "dirMult_lasso"=dirMultRes_alphaKnown_lasso,
+                   "dirMult_lasso_alphaEst"=dirMultRes_alphaEst_lasso)
+    return(allRes)
+  } else if(returnMutc){
+
+    listMutcAllEdges <- list(poisRes$mu_tc,
+                                        dirMultRes_alphaKnown$mu_tc,
+                                        dirMultRes_alphaEst$mu_tc,
+                                        poisResLasso$mu_tc,
+                                        dirMultRes_alphaKnown_lasso$mu_tc,
+                                        dirMultRes_alphaEst_lasso$mu_tc)
+    names(listMutcAllEdges) <-  c("poisson",
+                                           "dirMult",
+                                           "dirMult_alphaEst",
+                                           "poisson_lasso",
+                                           "dirMult_lasso",
+                                           "dirMult_lasso_alphaEst")
+
+    if(nNoiseEdges > 0){
+      listMutcOnlyTrue <- list(mu_tc_trueLinks,
+                               mu_tc_trueLinks_alphaKnown,
+                               mu_tc_trueLinks_alphaEst,
+                               mu_tc_trueLinks_lasso,
+                               mu_tc_trueLinks_alphaKnown_lasso,
+                               mu_tc_trueLinks_alphaEst_lasso)
+      names(listMutcOnlyTrue) <-  c("poisson",
+                                    "dirMult",
+                                    "dirMult_alphaEst",
+                                    "poisson_lasso",
+                                    "dirMult_lasso",
+                                    "dirMult_lasso_alphaEst")
+      listAllMutc <- list("allEdges"=listMutcAllEdges,
+                          "onlyTrueEdges"=listMutcOnlyTrue)
+    } else {
+      listAllMutc <- list("allEdges"=listMutcAllEdges)
+    }
+
+    return(listAllMutc)
+
+  }
+}

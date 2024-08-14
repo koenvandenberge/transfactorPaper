@@ -59,7 +59,7 @@ counts <- counts[,neurCells][,oot1]
 
 ### Convert pySCENIC GRN
 
-```{r}
+```{r, eval=FALSE}
 # set anaconda in path
 Sys.setenv(PATH=paste0('/Users/koenvandenberge/opt/anaconda3/bin:', Sys.getenv('PATH')))
 
@@ -74,9 +74,25 @@ p2 <- "/Library/Frameworks/Python.framework/Versions/3.8/bin/python3.8"
 reticulate::use_python(p2)
 ```
 
-```{python}
+```{r, eval=FALSE}
+library(reticulate)
+## new Mac
+# p1 <- "/usr/bin/python"
+p2 <- "/Users/koenvandenberge/opt/anaconda3/bin/python3"
+reticulate::use_python(p2)
+```
+
+
+```{python, eval=FALSE}
 import pickle
 import pandas as pd
+import ctxcore
+import pyscenic
+from ctxcore import genesig
+import sys
+sys.modules['pyscenic.genesig']=genesig
+
+
 file="/Users/koenvandenberge/Dropbox/research/GRN/evaluateGRN/oe10x/pySCENIC_results/output2_prune.dat"
 with open(file, "rb") as f:
     regulons = pickle.load(f)
@@ -94,7 +110,7 @@ for ii in range(len(regulons)):
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 tfNames <- py$tfNames
 tfNames <- gsub(x=tfNames, pattern="(+)", fixed=TRUE, replacement="")
 targetList <- py$dfList
@@ -111,7 +127,11 @@ alpha <- matrix(0, nrow = length(allTargetGenes), ncol=length(tfNames),
 alpha[cbind(targetRep, tfRep)] <- strengths
 X <- alpha
 X[X != 0] <- 1
+saveRDS(X, file="../data/oeGRN_processed.rds")
+```
 
+```{r}
+X <- readRDS("../data/oeGRN_processed.rds")
 ## filter counts
 counts <- counts[rownames(counts) %in% rownames(X),]
 
@@ -119,6 +139,7 @@ par(mfrow=c(1,2))
 barplot(table(rowSums(X)), main="By how many TFs is a gene regulated?")
 barplot(table(colSums(X)), main="How many genes is a TF regulating?")
 
+dim(X)
 ```
 
 # Poisson lasso 
@@ -135,12 +156,58 @@ poisLassoRes <- transfactor::estimateActivity(counts=as.matrix(counts),
                                               sparse=TRUE,
                                               repressions=FALSE)
 date <- Sys.Date()
-saveRDS(poisLassoRes, file=paste0("../data/poisLassoRes_", date,".rds"))
+saveRDS(poisLassoRes, file=paste0("../data/poisRes_", date,".rds"))
 ```
 
+
+```{r, eval=FALSE}
+### the function used for reproducibility reasons provided here
+tfCounts <- function (mu_gtc = "matrix", counts = "matrix", ...) 
+{
+    .local <- function (mu_gtc, counts, design = NULL) 
+    {
+        if (is.null(design)) {
+            message("No design matrix provided. Working with intercept only.")
+            ict <- rep(1, length = ncol(counts))
+            design <- stats::model.matrix(~-1 + ict)
+        }
+        if (nrow(design) != ncol(counts)) {
+            stop("Dimensions of design matrix and count matrix don't match.")
+        }
+        tfRows <- unlist(lapply(strsplit(rownames(mu_gtc), split = ";"), 
+            "[[", 1))
+        geneRows <- unlist(lapply(strsplit(rownames(mu_gtc), 
+            split = ";"), "[[", 2))
+        tfUniq <- unique(tfRows)
+        geneUniq <- unique(geneRows)
+        lvl <- unlist(apply(design, 1, function(row) {
+            which(row == 1)
+        }))
+        colnames(mu_gtc) <- paste0("ct", 1:ncol(mu_gtc))
+        mu_gtc_tibble <- suppressWarnings(tibble::as_tibble(mu_gtc))
+        Y_ti <- matrix(0, nrow = length(tfUniq), ncol = ncol(counts), 
+            dimnames = list(tfUniq, colnames(counts)))
+        for (gg in 1:length(geneUniq)) {
+            curGene <- geneUniq[gg]
+            id <- which(geneRows == curGene)
+            curTFs <- tfRows[id]
+            curMu <- as.matrix(mu_gtc_tibble[id, 1:ncol(design)])
+            curProbs <- sweep(curMu, 2, colSums(curMu) + 1e-10, 
+                "/")
+            curProbs <- curProbs[, lvl, drop = FALSE]
+            Y_ti[curTFs, ] <- Y_ti[curTFs, ] + sweep(curProbs, 
+                2, counts[curGene, ], "*")
+        }
+        return(Y_ti)
+    }
+}
+```
+
+
 ```{r}
-poisLassoRes <- readRDS("../data/poisLassoRes_2021-05-07.rds")
-Y_ti_poisson <- transfactor::tfCounts(poisLassoRes$mu_gtc, as.matrix(counts), U)
+poisLassoRes <- readRDS("../data/poisRes_2023-06-21.rds")
+Y_ti_poisson <- transfactor::tfCounts(mu_gtc=poisLassoRes$mu_gtc, counts=as.matrix(counts), design=U)
+sum(rowSums(Y_ti_poisson) == 0)
 ```
 
 
@@ -151,28 +218,33 @@ Y_tc_poisson <- Y_ti_poisson %*% U
 library(pheatmap)
 Yhat_tc_poisson <- Y_tc_poisson %*% diag(1/colSums(U))
 colnames(Yhat_tc_poisson) <- colnames(U)
+
+## heatmap on most variable TFs using activity counts
 ooVar <- order(rowVars(Yhat_tc_poisson), decreasing=TRUE)
+top20TFs <- rownames(Yhat_tc_poisson)[ooVar[1:20]]
+top20TFs
 pheatmap(t(scale(t(Yhat_tc_poisson[ooVar[1:20],]))), cluster_cols = FALSE)
-pdf("../plots/highVarTF_poissonLasso.pdf")
-pheatmap(t(scale(t(Yhat_tc_poisson[ooVar[1:20],]))), cluster_cols = FALSE)
-dev.off()
+# pdf("../plots/highVarTF_poissonLasso.pdf")
+# pheatmap(t(scale(t(Yhat_tc_poisson[ooVar[1:20],]))), cluster_cols = FALSE)
+# dev.off()
 
 Yhat_tc_poisson <- Yhat_tc_poisson[rowSums(Yhat_tc_poisson) > 0,]
+Yhat_tc_poisson <- Yhat_tc_poisson[rowVars(Yhat_tc_poisson) > 0,]
 yhatScaled <- t(scale(t(Yhat_tc_poisson)))
 
-
+## heatmap on most variable TFs using scaled activity
 pheatmap(yhatScaled, cluster_cols = FALSE, show_colnames = FALSE)
-pdf("../plots/allTF_poissonLasso.pdf", height=18)
-pheatmap(yhatScaled, cluster_cols = FALSE, 
-         show_colnames = FALSE, show_rownames = TRUE,
-         border_color = NA)
-dev.off()
+# pdf("../plots/allTF_poissonLasso.pdf", height=18)
+# pheatmap(yhatScaled, cluster_cols = FALSE, 
+#          show_colnames = FALSE, show_rownames = TRUE,
+#          border_color = NA)
+# dev.off()
 
-pdf("../plots/allTF_poissonLasso_noNames.pdf", height=10)
+# pdf("../plots/allTF_poissonLasso_noNames.pdf", height=10)
 pheatmap(yhatScaled, cluster_cols = FALSE, 
          show_colnames = FALSE, show_rownames = FALSE,
          border_color = NA)
-dev.off()
+# dev.off()
 
 
 ph <- pheatmap(yhatScaled, cluster_cols = FALSE, 
@@ -184,13 +256,21 @@ anro <- data.frame(cluster=factor(cl))
 rownames(anro) <- ph$tree_row$labels
 ancol <- data.frame(cellType=majorCellTypeBin)
 rownames(ancol) <- colnames(yhatScaled)
-pdf("../plots/allTF_poissonLasso_noNames_annotated.pdf", height=10)
+# pdf("../plots/allTF_poissonLasso_noNames_annotated.pdf", height=10)
 pheatmap(yhatScaled, cluster_cols = FALSE, 
          show_colnames = FALSE, show_rownames = FALSE,
          border_color = NA, annotation_row = anro,
          annotation_names_row = TRUE, annotation_legend = TRUE,
          annotation_col = ancol)
-dev.off()
+# dev.off()
+
+
+## annotate top 20 TFs in big heatmap
+phpaper <- pheatmap(yhatScaled, cluster_cols = FALSE, 
+         show_colnames = FALSE, show_rownames = FALSE,
+         border_color = NA, annotation_row = anro,
+         annotation_names_row = TRUE, annotation_legend = TRUE,
+         annotation_col = ancol)
 
 ```
 
@@ -338,20 +418,25 @@ lin <- getLineages(data = as.matrix(dfUMAPCounts[,1:2]),
                 start.clus = 3,
                 end.clus = 2)
 plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; slingshot:::lines.SlingshotDataSet(as.SlingshotDataSet(lin), col="black", lwd=2)
+# plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; lines(lin, col="black", lwd=2)
 sds <- getCurves(lin, extend = 'n')
 plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; slingshot:::lines.SlingshotDataSet(as.SlingshotDataSet(sds), col="black", lwd=2)
+# plot(dfUMAPCounts[,1:2], col=dfUMAPCounts$cellType) ; lines(sds, col="black", lwd=2)
 
-# sceGAMGene <- fitGAM(counts = as.matrix(counts),
-#               sds = sds,
-#               nknots = 5)
-# saveRDS(sceGAMGene, file="../data/sceGAMGene.rds")
-sceGAMGene <- readRDS("../data/sceGAMGene.rds")
 
-# sceGAMTF <- fitGAM(counts = Y_ti_poisson,
-#               sds = sds,
-#               nknots = 5)
-# saveRDS(sceGAMTF, file="../data/sceGAMTF.rds")
-sceGAMTF <- readRDS("../data/sceGAMTF.rds")
+sceGAMGene <- fitGAM(counts = as.matrix(counts),
+              sds = sds,
+              nknots = 5,
+              verbose = FALSE)
+saveRDS(sceGAMGene, file="../data/sceGAMGene.rds")
+# sceGAMGene <- readRDS("../data/sceGAMGene.rds")
+
+sceGAMTF <- fitGAM(counts = Y_ti_poisson,
+              sds = sds,
+              nknots = 5,
+              verbose = FALSE)
+saveRDS(sceGAMTF, file="../data/sceGAMTF.rds")
+# sceGAMTF <- readRDS("../data/sceGAMTF.rds")
 
 resGene <- associationTest(sceGAMGene)
 resTF <- associationTest(sceGAMTF)
@@ -368,6 +453,110 @@ sum(p.adjust(resTF_fc$pvalue, "fdr") <= 0.05, na.rm=TRUE) # 144
 ```
 
 # Distance-based ranking
+
+```{r, eval=FALSE}
+## for reproducibility 
+tfDistance <- function (activity = "list", X = "matrix", counts = "matrix", 
+    U = "matrix", ...) 
+{
+    .local <- function (activity, X, counts, U, cellGroups = NULL, 
+        distance = "Euclidean", scaleDistance = FALSE, contrast = "consecutive", 
+        referenceGroup = NULL) 
+    {
+        if (is.null(colnames(X))) {
+            colnames(X) <- paste0("tf", 1:ncol(X))
+        }
+        if (any(X == -1)) {
+            X[X == -1] <- 0
+        }
+        if (!is.null(cellGroups)) {
+            if (is.character(cellGroups)) {
+                cellGroups <- which(colnames(U) %in% cellGroups)
+            }
+        }
+        if (distance %in% c("Euclidean", "L1")) {
+            pi_gtc <- getPi_gtc_sufStats(activity$mu_gtc, counts = as.matrix(counts), 
+                U = U)
+            mu_gc <- ((counts %*% U) %*% diag(1/colSums(U)))
+            pi_gtc_mat <- do.call(rbind, pi_gtc)
+            pi_tfNames <- unlist(lapply(strsplit(rownames(pi_gtc_mat), 
+                split = ";"), "[[", 1))
+            pi_geneNames <- unlist(lapply(strsplit(rownames(pi_gtc_mat), 
+                split = ";"), "[[", 2))
+            allTF <- colnames(X)
+            tfDist <- vector(length = length(allTF))
+            for (tt in seq_len(length(allTF))) {
+                curTF <- allTF[tt]
+                curTargets <- rownames(X)[which(X[, curTF] == 
+                  1)]
+                rowSel <- fastmatch::fmatch(paste0(curTF, ";", 
+                  curTargets), rownames(pi_gtc_mat))
+                curPi <- pi_gtc_mat[rowSel, , drop = FALSE]
+                if (!is.null(cellGroups)) {
+                  curDist <- .distanceCalculation_original(mu_gc = mu_gc[curTargets, 
+                    ], pi_gtc = curPi, cellID = cellGroups, distance = distance, 
+                    scaleDistance = scaleDistance)
+                }
+                if (contrast == "consecutive") {
+                  conDist <- c()
+                  for (kk in seq_len(ncol(U) - 1)) {
+                    conDist[kk] <- .distanceCalculation_original(mu_gc = mu_gc[curTargets, 
+                      , drop = FALSE], pi_gtc = curPi, cellID = c(kk, 
+                      kk + 1), distance = distance, scaleDistance = scaleDistance)
+                  }
+                  curDist <- sum(conDist)
+                }
+                else if (contrast == "reference") {
+                  refDist <- c()
+                  varsToCompare <- seq_len(ncol(U))[-referenceGroup]
+                  for (kk in seq_len(length(varsToCompare))) {
+                    refDist[kk] <- .distanceCalculation_original(mu_gc = mu_gc[curTargets, 
+                      ], pi_gtc = curPi, cellID = c(referenceGroup, 
+                      varsToCompare[kk]), distance = distance, 
+                      scaleDistance = scaleDistance)
+                  }
+                  curDist <- sum(refDist)
+                }
+                tfDist[tt] <- curDist
+            }
+            names(tfDist) <- allTF
+        }
+        else if (distance %in% c("rank", "EuclideanTF", "L1TF")) {
+            if (!is.null(cellGroups)) {
+                curDist <- .distanceCalculation_newMethods(mu_tc = activity$mu_tc, 
+                  cellID = cellGroups, distance = distance, scaleDistance = scaleDistance)
+                return(curDist)
+            }
+            if (contrast == "consecutive") {
+                conDist <- matrix(NA, nrow = ncol(X), ncol = ncol(U) - 
+                  1)
+                for (kk in seq_len(ncol(U) - 1)) {
+                  conDist[, kk] <- .distanceCalculation_newMethods(mu_tc = activity$mu_tc, 
+                    cellID = c(kk, kk + 1), distance = distance, 
+                    scaleDistance = scaleDistance)
+                }
+                tfDist <- rowSums(conDist)
+                names(tfDist) <- rownames(activity$mu_tc)
+            }
+            else if (contrast == "reference") {
+                varsToCompare <- seq_len(ncol(U))[-referenceGroup]
+                refDist <- matrix(NA, nrow = ncol(X), ncol = ncol(U) - 
+                  1)
+                for (kk in seq_len(length(varsToCompare))) {
+                  refDist[, kk] <- .distanceCalculation_newMethods(mu_tc = activity$mu_tc, 
+                    cellID = c(referenceGroup, varsToCompare[kk]), 
+                    distance = distance, scaleDistance = scaleDistance)
+                }
+                tfDist <- rowSums(refDist)
+                names(tfDist) <- rownames(activity$mu_tc)
+            }
+        }
+        return(tfDist)
+    }
+    .local(activity, X, counts, U, ...)
+}
+```
+
 
 ```{r}
 tfDist_euclidConsec <- transfactor::tfDistance(activity = poisLassoRes,
@@ -431,9 +620,16 @@ for(tt in 1:9){
           ylab="Contribution to cell gene expression",
           xaxt = "n")
 }
-## of all distances, how much do they explain? 42%
+## of all distances, how much do they explain? 42% for top 9; 28% for top 4.
 ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
 sum(tfDist_euclidConsecScaled[ooEuclidScaled[1:9]]) / sum(tfDist_euclidConsecScaled)
+sum(tfDist_euclidConsecScaled[ooEuclidScaled[1:4]]) / sum(tfDist_euclidConsecScaled)
+
+
+plot(cumsum((tfDist_euclidConsecScaled[ooEuclidScaled]) / sum(tfDist_euclidConsecScaled)),
+     xlim=c(1,30), log="y", 
+     xlab="Ordered TFs", ylab="Variance explained")
+
 
 # plot top TFs for scaled L1
 head(sort(tfDist_l1ConsecScaled, decreasing=TRUE), 20)
@@ -465,7 +661,7 @@ geneSets <- msigdbr(species = "Mus musculus", category = "C5", subcategory = "BP
 geneSets <- geneSets[geneSets$gene_symbol %in% tf,]
 m_list <- geneSets %>% split(x = .$gene_symbol, f = .$gs_name)
 #stats <- assocRes$waldStat_lineage1_conditionMock
-stats <- tfDist_l1ConsecScaled
+stats <- tfDist_euclidConsecScaled
 eaRes <- fgsea(pathways = m_list, stats = stats, nperm = 5e4, minSize = 10)
 eaRes[order(eaRes$NES, decreasing=TRUE),]
 ```
@@ -616,13 +812,13 @@ plot(umapAUCellFull, pch=16, cex=1/2, col=pal[pt1Groups], main="AUCell")
 plot(umapPoisLassoFull, pch=16, cex=1/2, col=pal[pt1Groups], main="Poisson model")
 
 ## Graph-based clustering to compare 
-library(scran) ; library(bluster)
-clustViper <- clusterRows(umapViperFull, NNGraphParam(cluster.fun="louvain"))
-clustAUCell <- clusterRows(umapAUCellFull, NNGraphParam(cluster.fun="louvain"))
-clustPoisLasso <- clusterRows(umapPoisLassoFull, NNGraphParam(cluster.fun="louvain"))
-mclust::adjustedRandIndex(clustViper, pt1Groups)
-mclust::adjustedRandIndex(clustAUCell, pt1Groups)
-mclust::adjustedRandIndex(clustPoisLasso, pt1Groups)
+# library(scran) ; library(bluster)
+# clustViper <- clusterRows(umapViperFull, NNGraphParam(cluster.fun="louvain"))
+# clustAUCell <- clusterRows(umapAUCellFull, NNGraphParam(cluster.fun="louvain"))
+# clustPoisLasso <- clusterRows(umapPoisLassoFull, NNGraphParam(cluster.fun="louvain"))
+# mclust::adjustedRandIndex(clustViper, pt1Groups)
+# mclust::adjustedRandIndex(clustAUCell, pt1Groups)
+# mclust::adjustedRandIndex(clustPoisLasso, pt1Groups)
 ```
 
 
@@ -645,19 +841,19 @@ counts10 <- counts %*% design10
 ```
 
 
-```{r poisCell10, eval=FALSE}
+```{r poisCell10, eval=TRUE}
 poisLassoRes_design10 <- transfactor::estimateActivity(counts = counts,
                                                    X = X,
                                                    model = "poisson",
                                                    U = design10,
-                                                   plot = TRUE,
-                                                   verbose = TRUE,
+                                                   plot = FALSE,
+                                                   verbose = FALSE,
                                                    maxIter = 1000,
                                                    epsilon = 1,
                                                    sparse = TRUE,
                                                    repressions = FALSE)
 # converged after iteration 87. Log-lik: -42841940.422
-saveRDS(poisLassoRes_design10, file="../data/poisLassoRes_repr_design10Cells.rds")
+saveRDS(poisLassoRes_design10, file="../data/230621_poisLassoRes_repr_design10Cells.rds")
 ```
 
 
@@ -739,7 +935,7 @@ enrichMat_AUCell <- resAUCell[colnames(X),]
 ## Dimensionality reduction on the output of each method
 
 ```{r}
-poisLassoRes_design10 <- readRDS("../data/poisLassoRes_repr_design10Cells.rds")
+poisLassoRes_design10 <- readRDS("../data/230621_poisLassoRes_repr_design10Cells.rds")
 
 library(scater)
 set.seed(44)
@@ -805,7 +1001,7 @@ oo2 <- order(tfDist_euclidConsecScaled_poisson, decreasing=TRUE)
 head(cbind(oo1, oo2), 9) #all 9 still in top.
 
 # Dim red
-Y_ti_poisson_noSparse <- transfactor::tfCounts(poisRes$mu_gtc, counts, U)
+Y_ti_poisson_noSparse <- transfactor::tfCounts(mu_gtc=poisRes$mu_gtc, counts=counts, design=U)
 pcPois <- scater::calculatePCA(x = log1p(Y_ti_poisson_noSparse),
                                ncomponents = 10,
                                ntop = nrow(Y_ti_poisson_noSparse))
@@ -861,6 +1057,8 @@ phm <- pheatmap(yhatScaled, cluster_cols = FALSE,
 
 ## Top distance TFs
 
+### Top nine 
+
 ```{r}
 ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
 topTFs <- names(tfDist_euclidConsecScaled[ooEuclidScaled[1:9]])
@@ -887,8 +1085,41 @@ for(tt in 1:9){
 
 pTF <- cowplot::plot_grid(plotlist=pTFList, labels=c("c"))
 pTF
-ggsave("plots/topTFsPoissonLasso.pdf")
+ggsave("../plots/topTFsPoissonLasso.pdf")
 ```
+
+### Top four 
+
+```{r}
+ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
+topTFs <- names(tfDist_euclidConsecScaled[ooEuclidScaled[1:4]])
+pTFList <- list()
+for(tt in 1:4){
+  curTF <- topTFs[tt]
+  curDF <- data.frame(bin=pt1Groups,
+                      contribution=pi_ti_poisson[curTF,])
+  pTFList[[tt]] <- ggplot(curDF, aes(x=bin, y=contribution, color=bin)) +
+    geom_boxplot() +
+    theme_bw() +
+    scale_color_manual(values=wesanderson::wes_palette("Zissou1", nlevels(pt1Groups), "continuous")) +
+    theme(axis.text.x = element_blank(),
+        legend.position = "none",
+        axis.title = element_text(size=10),
+        axis.text.y = element_text(size=7),
+        title = element_text(size=8)) +
+    xlab("Pseudotime") +
+    ylab("Relative contribution") +
+    ggtitle(curTF)
+    
+    
+}
+
+pTF4 <- cowplot::plot_grid(plotlist=pTFList, labels=c("c"))
+pTF4
+ggsave("../plots/topTFsPoissonLasso_top4.pdf")
+```
+
+### all
 
 ```{r tfPDF}
 ooEuclidScaled <- order(tfDist_euclidConsecScaled, decreasing=TRUE)
@@ -908,7 +1139,7 @@ for(tt in 1:length(tfDist_euclidConsecScaled)){
         axis.text.y = element_text(size=5),
         title = element_text(size=8)) +
     xlab("Pseudotime") +
-    ylab("Contribution") +
+    ylab("Relative contribution") +
     ggtitle(paste0(curTF,": distance = ",round(tfDist_euclidConsecScaled[ooEuclidScaled[tt]], 3))))
 }
 dev.off()
@@ -943,8 +1174,8 @@ pDR
 ## Composite
 
 ```{r}
-pComp <- gridExtra::grid.arrange(pTraj, pTF, phm[[4]], pDR)
-ggsave(file="../plots/oeComposite.pdf", pComp, width=11, height=12)
+pComp <- gridExtra::grid.arrange(pTraj, pTF4, phm[[4]], pDR)
+ggsave(file="../plots/oeComposite_top4TF.pdf", pComp, width=11, height=12)
 ```
 
 
