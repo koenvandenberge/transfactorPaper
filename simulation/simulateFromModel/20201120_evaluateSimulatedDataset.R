@@ -582,7 +582,8 @@ evaluateSimulation_repressions <- function(counts,
                                             truth,
                                             verbose = FALSE,
                                             alphaScale = 1,
-                                           iterMax = 500){
+                                            iterMax = 500,
+                                            allVoom = FALSE){
 
   XPos <- X
   XPos[XPos == -1] <- 0
@@ -611,6 +612,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_pois <- transfactor::tfCounts(mu_gtc=poisRes$mu_gtc, pi_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_pois <- glmGamPoiResultsAll(Y_ti_pois, design)
   indTestGamPoi_pois <- glmGamPoiResultsInd(Y_ti_pois, design)
+  fTestLimma_pois <- limmaResultsAll(Y_ti_pois, design, doVoom = TRUE)
+  indTestLimma_pois <- limmaResultsInd(Y_ti_pois, design, doVoom = TRUE)
 
   ## Dir-Mult model, known alpha
   dirMultRes_alphaKnown <- transfactor::estimateActivity(counts = countsPos,
@@ -628,6 +631,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMult <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult <- glmGamPoiResultsAll(Y_ti_dirMult, design)
   indTestGamPoi_dirMult <- glmGamPoiResultsInd(Y_ti_dirMult, design)
+  fTestLimma_dirMult <- limmaResultsAll(Y_ti_dirMult, design, doVoom = TRUE)
+  indTestLimma_dirMult <- limmaResultsInd(Y_ti_dirMult, design, doVoom = TRUE)
 
   ## Dir-Mult model, estimate alpha
   dirMultRes_alphaEst <- transfactor::estimateActivity(counts = countsPos,
@@ -644,6 +649,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMult_alphaEst <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst, design)
   indTestGamPoi_dirMult_alphaEst <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst, design)
+  fTestLimma_dirMult_alphaEst <- limmaResultsAll(Y_ti_dirMult_alphaEst, design, doVoom = TRUE)
+  indTestLimma_dirMult_alphaEst <- limmaResultsInd(Y_ti_dirMult_alphaEst, design, doVoom = TRUE)
 
   ## Poisson model, lasso
   poisResLasso <- transfactor::estimateActivity(counts = countsPos,
@@ -659,6 +666,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_poisLasso <- transfactor::tfCounts(mu_gtc=poisResLasso$mu_gtc, pi_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_poisLasso <- glmGamPoiResultsAll(Y_ti_poisLasso, design)
   indTestGamPoi_poisLasso <- glmGamPoiResultsInd(Y_ti_poisLasso, design)
+  fTestLimma_poisLasso <- limmaResultsAll(Y_ti_poisLasso, design, doVoom = TRUE)
+  indTestLimma_poisLasso <- limmaResultsInd(Y_ti_poisLasso, design, doVoom = TRUE)
 
   ## Dir-Mult model, known alpha, lasso
   dirMultRes_alphaKnown_lasso <- transfactor::estimateActivity(counts = countsPos,
@@ -676,6 +685,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMult_lasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown_lasso$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMultLasso <- glmGamPoiResultsAll(Y_ti_dirMult_lasso, design)
   indTestGamPoi_dirMultLasso <- glmGamPoiResultsInd(Y_ti_dirMult_lasso, design)
+  fTestLimma_dirMultLasso <- limmaResultsAll(Y_ti_dirMult_lasso, design, doVoom = TRUE)
+  indTestLimma_dirMultLasso <- limmaResultsInd(Y_ti_dirMult_lasso, design, doVoom = TRUE)
 
   ## Dir-Mult model, estimate alpha, lasso
   dirMultRes_alphaEst_lasso <- transfactor::estimateActivity(counts = countsPos,
@@ -692,6 +703,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMult_alphaEst_lasso <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst_lasso$pi_gtc, mu_gtc=NULL, counts=countsPos, design=design)
   fTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso, design)
   indTestGamPoi_dirMult_alphaEst_lasso <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso, design)
+  fTestLimma_dirMult_alphaEst_lasso <- limmaResultsAll(Y_ti_dirMult_alphaEst_lasso, design, doVoom = TRUE)
+  indTestLimma_dirMult_alphaEst_lasso <- limmaResultsInd(Y_ti_dirMult_alphaEst_lasso, design, doVoom = TRUE)
 
   ## Poisson model, lasso, repressions
   poisResLasso_repr <- transfactor::estimateActivity(counts = counts,
@@ -707,6 +720,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_poisLasso_repr <- transfactor::tfCounts(mu_gtc=poisResLasso_repr$mu_gtc, pi_gtc=NULL, counts=counts, design=design)
   fTestGamPoi_poisLasso_repr <- glmGamPoiResultsAll(Y_ti_poisLasso_repr, design)
   indTestGamPoi_poisLasso_repr <- glmGamPoiResultsInd(Y_ti_poisLasso_repr, design)
+  fTestLimma_poisLasso_repr <- limmaResultsAll(Y_ti_poisLasso_repr, design, doVoom = TRUE)
+  indTestLimma_poisLasso_repr <- limmaResultsInd(Y_ti_poisLasso_repr, design, doVoom = TRUE)
 
   ## Dir-Mult model, known alpha, lasso, repressions
   dirMultRes_alphaKnown_lasso_repr <- transfactor::estimateActivity(counts = counts,
@@ -725,6 +740,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMultLasso_repr <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaKnown_lasso_repr$pi_gtc, mu_gtc=NULL, counts=counts[rownames(dirMultRes_alphaKnown_lasso_repr$countsSufStats),], design=design)
   fTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsAll(Y_ti_dirMultLasso_repr, design)
   indTestGamPoi_dirMultLasso_repr <- glmGamPoiResultsInd(Y_ti_dirMultLasso_repr, design)
+  fTestLimma_dirMultLasso_repr <- limmaResultsAll(Y_ti_dirMultLasso_repr, design, doVoom = TRUE)
+  indTestLimma_dirMultLasso_repr <- limmaResultsInd(Y_ti_dirMultLasso_repr, design, doVoom = TRUE)
 
   ## Dir-Mult model, estimate alpha, lasso, repressions
   dirMultRes_alphaEst_lasso_repr <- transfactor::estimateActivity(counts = counts,
@@ -741,6 +758,8 @@ evaluateSimulation_repressions <- function(counts,
   Y_ti_dirMult_alphaEst_lasso_repr <- transfactor::tfCounts(pi_gtc=dirMultRes_alphaEst_lasso_repr$pi_gtc, mu_gtc=NULL, counts=counts[rownames(dirMultRes_alphaEst_lasso_repr$countsSufStats),], design=design)
   fTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsAll(Y_ti_dirMult_alphaEst_lasso_repr, design)
   indTestGamPoi_dirMult_alphaEst_lasso_repr <- glmGamPoiResultsInd(Y_ti_dirMult_alphaEst_lasso_repr, design)
+  fTestLimma_dirMult_alphaEst_lasso_repr <- limmaResultsAll(Y_ti_dirMult_alphaEst_lasso_repr, design, doVoom = TRUE)
+  indTestLimma_dirMult_alphaEst_lasso_repr <- limmaResultsInd(Y_ti_dirMult_alphaEst_lasso_repr, design, doVoom = TRUE)
 
   ## viper
   viperRes <- viper(counts,
@@ -754,6 +773,7 @@ evaluateSimulation_repressions <- function(counts,
   indTestLimma_viper <- limmaResultsInd(viperRes, design)
   fTestLimma_viper <- limmaResultsAll(viperRes, design)
 
+
   ## AUCell
   obj <- AUCell_buildRankings(t(scale(t(counts))), nCores=1, plotStats = F, verbose = F) %>%
     AUCell_calcAUC(genesets, ., verbose=F)
@@ -766,7 +786,11 @@ evaluateSimulation_repressions <- function(counts,
   deId <- truth[,1]
 
   # poisson
-  ooF <- order(fTestGamPoi_pois$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_pois$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_pois$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   df <- data.frame(tpr=tpr,
@@ -775,7 +799,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_pois <- simple_auc(tpr, fpr)
 
   # poisson,  lasso
-  ooF <- order(fTestGamPoi_poisLasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_poisLasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_poisLasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -785,7 +813,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_poisLasso <- simple_auc(tpr, fpr)
 
   # poisson,  lasso, repressions
-  ooF <- order(fTestGamPoi_poisLasso_repr$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_poisLasso_repr$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_poisLasso_repr$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -795,7 +827,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_poisLasso_repr <- simple_auc(tpr, fpr)
 
   # dirMult
-  ooF <- order(fTestGamPoi_dirMult$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -805,7 +841,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_dirMult <- simple_auc(tpr, fpr)
 
   # dirMult,  lasso
-  ooF <- order(fTestGamPoi_dirMultLasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMultLasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMultLasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -815,7 +855,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_dirMultLasso <- simple_auc(tpr, fpr)
 
   # dirMult,  lasso, repressions
-  ooF <- order(fTestGamPoi_dirMultLasso_repr$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMultLasso_repr$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMultLasso_repr$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -825,7 +869,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_dirMultLasso_repr <- simple_auc(tpr, fpr)
 
   # dirMult, est alpha
-  ooF <- order(fTestGamPoi_dirMult_alphaEst$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult_alphaEst$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult_alphaEst$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -835,7 +883,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_dirMult_alphaEst <- simple_auc(tpr, fpr)
 
   # dirMult, est alpha, lasso
-  ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult_alphaEst_lasso$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,
@@ -845,7 +897,11 @@ evaluateSimulation_repressions <- function(counts,
   auc_dirMult_alphaEst_lasso <- simple_auc(tpr, fpr)
 
   # dirMult, est alpha, lasso, repressions
-  ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso_repr$f_statistic, decreasing = TRUE)
+  if(allVoom){
+    ooF <- order(abs(fTestLimma_dirMult_alphaEst_lasso_repr$F), decreasing = TRUE)
+  } else {
+    ooF <- order(fTestGamPoi_dirMult_alphaEst_lasso_repr$f_statistic, decreasing = TRUE)
+  }
   tpr <- cumsum(deId[ooF]) / sum(deId)
   fpr <- cumsum(!deId[ooF]) / sum(!deId)
   curDf <- data.frame(tpr=tpr,

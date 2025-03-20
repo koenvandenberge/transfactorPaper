@@ -233,7 +233,8 @@ pDiauxStability <- ggplot(slopeDiaux, aes(x=genotype, y=slope)) +
   theme_classic() +
   theme(axis.text.x = element_text(angle=45, hjust=.9)) +
   geom_hline(yintercept = 0, lty=2, col="red", alpha=.3) +
-  geom_point(data = dfAllDiaux, col = "blue", size=1) # on full data
+  geom_point(data = dfAllDiaux, col = "blue", size=1) +
+  ylab("Difference")# on full data
 pDiauxStability
 saveRDS(pDiauxStability, file="../plots/pDiauxStability.rds")
 ```
@@ -250,7 +251,8 @@ pNitroStability <- ggplot(slopeNitro, aes(x=genotype, y=slope)) +
   theme_classic() +
   theme(axis.text.x = element_text(angle=45, hjust=.9)) +
   geom_hline(yintercept = 0, lty=2, col="red", alpha=.3) +
-  geom_point(data = dfAllNitro,  aes(x=genotype, y=slope), col = "blue", size=1) # on full data
+  geom_point(data = dfAllNitro,  aes(x=genotype, y=slope), col = "blue", size=1) +
+  ylab("Difference")# on full data
 pNitroStability
 saveRDS(pNitroStability, file="../plots/pNitroStability.rds")
 ```

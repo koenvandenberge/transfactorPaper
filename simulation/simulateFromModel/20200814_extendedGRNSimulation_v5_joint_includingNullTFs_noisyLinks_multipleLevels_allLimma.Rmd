@@ -410,10 +410,12 @@ for(nnTF in 1:length(nNoiseTFGrid)){
 date <- Sys.Date()
 date <- gsub(x=date, pattern="-", replacement="")
 saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll",date,"_allLimma.rds"))
-# dfAUCAll <- readRDS("../objects/dfAUCAll20210430.rds")
+# dfAUCAll <- readRDS("../objects/dfAUCAll20240906_allLimma.rds")
+dfAUCAll$method[dfAUCAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
 dfAUCAll$method <- factor(dfAUCAll$method, levels = c("poisson", "poisson_lasso",
                                                       "dirMult", "dirMult_lasso",
-                                                      "dirMult_alphaEst", "dirMult_lasso_alphaEst",
+                                                      "dirMultEBayes", "dirMultEBayes_lasso",
                                                       "viper", "AUCell"))
 dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
 dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
@@ -427,5 +429,5 @@ ggplot(dfAUCAll, aes(x=method, y=auc)) +
         axis.ticks.x = element_blank()) +
   scale_y_continuous(n.breaks=3) +
   xlab("") + ylab("AUC")
-ggsave("../plots/aucAllSettings_allLimma.pdf", width=12, height=9)
+ggsave("../../plots/domino/aucAllSettings_allLimma.pdf", width=12, height=9)
 ```

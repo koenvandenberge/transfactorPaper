@@ -1,0 +1,385 @@
+---
+title: "Evaluate TF activity: repressions between TFs and targets"
+author: "Koen Van den Berge"
+date: "3/24/2020"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+Here, we use the code to evaluate methods based on the `dyngen` simulation, but enforce a more discriminative prior between true and noisy edges.
+
+
+# Generate datasets
+
+```{r, eval=FALSE}
+library(tidyverse)
+library(dyngen)
+
+nIter <- 6
+for(nn in 1:nIter){
+  # generate a dataset
+  set.seed(nn*10)
+  backbone <- backbone_linear()
+  model <- initialise_model(
+    backbone = backbone,
+    num_tfs = 100,
+    num_targets = 500,
+    num_hks = 100,
+    tf_network_params = tf_network_default(sample_num_regulators = function() 2),
+    feature_network_params = feature_network_default(max_in_degree=20),
+    download_cache_dir = "~/.cache/dyngen",
+    num_cores = 4,
+    simulation_params = simulation_default(
+      census_interval = 1,
+      compute_cellwise_grn = TRUE
+    )
+  )
+  dataset <- model %>%
+    generate_tf_network() %>%
+    generate_feature_network() %>%
+    generate_kinetics() %>%
+    generate_gold_standard() %>%
+    generate_cells() %>%
+    generate_experiment()
+  
+  saveRDS(list(model,dataset),
+          file = paste0("datasets/simIters/dataset",nn,".rds"))
+}
+
+```
+
+
+# One dataset
+
+```{r}
+library(msigdbr)
+library(GSEABase)
+library(viper)
+library(AUCell)
+library(tidyverse)
+library(dyngen)
+ksource <- function(x, ...) {
+  library(knitr)
+  source(purl(x, output = tempfile()), ...)
+}
+# install.packages("/domino/edv/chbv-bm-single-cell/KVande/24/transfactorPaper/transfactor/", repos = NULL)
+library(transfactor)
+source('../simulateFromModel/20201120_evaluateSimulatedDataset.R')
+
+data <- readRDS("./datasets/simIters/dataset1.rds")
+model <- data[[1]]
+dataset <- data[[2]]
+
+## plot
+### Trajectory
+#  doesnt work: install.packages("/domino/edv/chbv-bm-single-cell/KVande/24/transfactorPaper/dynplot/", repos = NULL)
+# devtools::install_github(repo="dynverse/dynfeature")
+# devtools::install_github(repo="dynverse/dynplot")
+library(dynplot)
+wrappedDataset <- wrap_dataset(dataset)
+# plots an MDS
+# g1 <- dynplot::plot_dimred(wrappedDataset,
+#             label_milestones = TRUE,
+#             size_cells = 1,
+#             size_trajectory = 2)
+
+### GRN
+g2 <- plot_backbone_modulenet(dataset) + labs(title = "Backbone module reg. net.")
+g3 <- plot_feature_network(dataset, show_targets = FALSE) +
+            labs(title = "TF reg. net.")
+g4 <- plot_feature_network(dataset) + labs(title = "TF + target reg. net.")
+
+g <- patchwork::wrap_plots(g2, g3, g4, byrow = TRUE, ncol = 2, nrow = 2, 
+                           widths = rep(1, 2), heights = rep(1, 2)) +
+  patchwork::plot_annotation(tag_levels = "A")
+# ggsave("../plots/simDataDyngen1Plots.pdf", g, width = 30, height = 15)
+
+
+
+countsAll <- t(as.matrix(dataset$experiment$counts_premrna + dataset$experiment$counts_mrna))
+
+# only look at TFs
+feature_info <- dataset$feature_info
+tf_info <- feature_info %>% filter(is_tf)
+feature_network <- dataset$feature_network %>% mutate(name = paste0(from, "->", to))
+
+### get true GRN
+tf <- as.character(unique(feature_network$from))
+targets <- as.character(unique(feature_network$to))
+
+## full GRN including repressions
+XAll <- matrix(0, nrow=length(targets), ncol=length(tf),
+            dimnames=list(targets, tf))
+for(tt in 1:ncol(XAll)){
+  curTF <- tf[tt]
+  curTFTargets <- as.character(feature_network[feature_network$from == curTF, "to"][[1]])
+  curTFEffects <- feature_network[feature_network$from == curTF, "effect"][[1]]
+  XAll[cbind(curTFTargets,curTF)] <- curTFEffects
+}
+#sort(colSums(abs(XAll))) ; sort(table(feature_network$from)[colnames(XAll)]) #should be same
+XAll <- XAll[rowSums(abs(XAll))>0,]
+XAll <- XAll[,colSums(abs(XAll))>0]
+# remove TFs with only repressions
+tfsWithOnlyRepression <- apply(XAll, 2, function(x){
+  all(x == 0 | x == -1)
+})
+XAll <- XAll[,!tfsWithOnlyRepression]
+barplot(table(rowSums(abs(XAll))))
+barplot(table(colSums(abs(XAll))))
+
+## alpha
+alpha <- abs(XAll)
+id <- as.matrix(cbind(dataset$feature_network[,2], dataset$feature_network[,1]))
+keepId <- id[,1] %in% rownames(XAll) & id[,2] %in% colnames(XAll) & dataset$feature_network$effect == 1
+id <- id[keepId,]
+# alpha[id] <- dataset$feature_network$strength[keepId]
+### more discriminative prior by making this much larger
+alpha[id] <- dataset$feature_network$strength[keepId] * 100
+
+# truth: only TFs from burn-in or modules.
+truth <- data.frame(de=rep(1, ncol(XAll)),
+                    row.names=colnames(XAll))
+truth[grep(x=rownames(truth), pattern="Target|HK"),] <- 0
+
+
+countsTfTargets <- countsAll[rownames(XAll),]
+
+nNoiseEdges <- 500
+nNoiseTFs <- 10
+XNoisy <- addNoiseToGRN(X = XAll,
+                       nNoiseTFs = nNoiseTFs,
+                       nNoiseEdges = nNoiseEdges,
+                       noiseProb = 3/nrow(XAll),
+                       seed = 10)
+
+# truth
+truthNoisy <- rbind(truth, data.frame(de=rep(0, nNoiseTFs),
+                                      row.names=paste0("noisyTF",1:nNoiseTFs)))
+
+## filter if necessary
+keepGene <- rowSums(abs(XNoisy)) > 0
+counts <- countsTfTargets[keepGene,]
+curAlpha <- alpha[keepGene,]
+XNoisy <- XNoisy[keepGene,]
+keepTF <- colSums(abs(XNoisy)) > 0
+truthNoisy <- truthNoisy[keepTF,,drop=FALSE]
+
+# get true alpha for noisy GRN
+if(nNoiseTFs > 0){
+  alphaTrueNoisy <- cbind(curAlpha, XNoisy[,(ncol(XAll)+1):(ncol(XAll)+nNoiseTFs)])
+} else {
+  alphaTrueNoisy <- curAlpha
+}
+XNoisy <- XNoisy[,keepTF]
+alphaTrueNoisy <- alphaTrueNoisy[,keepTF]
+alphaTrueNoisy[XNoisy == 0] <- 0
+rownames(truthNoisy) <- colnames(XNoisy)
+# viper regulon
+regulonNoisy <- constructViperRegulon(XNoisy, alphaTrueNoisy)
+# AUCell genesets
+genesetsNoisy <- constructGenesets(XNoisy, alphaTrueNoisy)
+
+qSteps <- 0.05
+pt <- dataset$experiment$cell_info$sim_time
+ptGroups <- Hmisc::cut2(pt, cuts = quantile(pt, prob=seq(0,1,by=qSteps)))
+Xpt <- model.matrix(~0+ptGroups)
+design <- Xpt
+```
+
+
+
+```{r, eval=TRUE, messages=FALSE}
+res <- evaluateSimulation_repressions(counts = countsAll,
+                               design = design,
+                               X = XNoisy,
+                              alpha = alphaTrueNoisy,
+                              regulon = regulonNoisy,
+                              genesets = genesetsNoisy,
+                              truth = truthNoisy,
+                              verbose = TRUE,
+                              alphaScale = 1)
+
+res$pAll
+res$dfAUC
+
+```
+
+
+# Over iterations
+
+```{r}
+nNoiseTFGrid <- c(0, ncol(XAll), ncol(XAll)*2, ncol(XAll)*4) # 100% to 33.3% data-generating TFs
+nNoiseEdgeGrid <- c(-sum(abs(XAll))/2, -sum(abs(XAll))/4, 0, sum(abs(XAll))*2, sum(abs(XAll))*4) # -50% to +200% true links
+nIter <- 6
+
+
+
+pNoLeg <- list()
+for(nn in 1:nIter){
+  # load a dataset
+  data <- readRDS(paste0("datasets/simIters/dataset",nn,".rds"))
+  model <- data[[1]]
+  dataset <- data[[2]]
+  
+  for(nnTF in 1:length(nNoiseTFGrid)){
+    nNoiseTFs <- nNoiseTFGrid[nnTF]
+    for(nnEdge in 1:length(nNoiseEdgeGrid)){
+      set.seed(nn*10*nnTF*nnEdge)
+      nNoiseEdges <- nNoiseEdgeGrid[nnEdge]
+      countsAll <- t(as.matrix(dataset$experiment$counts_premrna + dataset$experiment$counts_mrna))
+      
+      # only look at TFs
+      feature_info <- dataset$feature_info
+      tf_info <- feature_info %>% filter(is_tf)
+      feature_network <- dataset$feature_network %>% mutate(name = paste0(from, "->", to))
+      
+      ### get true GRN
+      tf <- as.character(unique(feature_network$from))
+      targets <- as.character(unique(feature_network$to))
+      
+      ## full GRN including repressions
+      XAll <- matrix(0, nrow=length(targets), ncol=length(tf),
+                  dimnames=list(targets, tf))
+      for(tt in 1:ncol(XAll)){
+        curTF <- tf[tt]
+        curTFTargets <- as.character(feature_network[feature_network$from == curTF, "to"][[1]])
+        curTFEffects <- feature_network[feature_network$from == curTF, "effect"][[1]]
+        XAll[cbind(curTFTargets,curTF)] <- curTFEffects
+      }
+      XAll <- XAll[rowSums(abs(XAll))>0,]
+      XAll <- XAll[,colSums(abs(XAll))>0]
+      # remove TFs with only repressions
+      tfsWithOnlyRepression <- apply(XAll, 2, function(x){
+        all(x == 0 | x == -1)
+      })
+      XAll <- XAll[,!tfsWithOnlyRepression]
+      #barplot(table(rowSums(abs(XAll))))
+      #barplot(table(colSums(abs(XAll))))
+      
+      ## alpha
+      alpha <- abs(XAll)
+      id <- as.matrix(cbind(dataset$feature_network[,2], dataset$feature_network[,1]))
+      keepId <- id[,1] %in% rownames(XAll) & id[,2] %in% colnames(XAll) & dataset$feature_network$effect == 1
+      id <- id[keepId,]
+      # alpha[id] <- dataset$feature_network$strength[keepId]
+      ### more discriminative prior by making this much larger
+      alpha[id] <- dataset$feature_network$strength[keepId] * 100
+      
+      
+      # truth: only TFs from burn-in or modules.
+      truth <- data.frame(de=rep(1, ncol(XAll)),
+                          row.names=colnames(XAll))
+      truth[grep(x=rownames(truth), pattern="Target|HK"),] <- 0
+      
+      
+      countsTfTargets <- countsAll[rownames(XAll),]
+      
+      XNoisy <- addNoiseToGRN(X = XAll,
+                             nNoiseTFs = nNoiseTFs,
+                             nNoiseEdges = nNoiseEdges,
+                             noiseProb = 3/nrow(XAll))
+      
+      # truth
+      truthNoisy <- rbind(truth, data.frame(de=rep(0, nNoiseTFs)))
+      ## filter if necessary
+      keepGene <- rowSums(abs(XNoisy)) > 0
+      counts <- countsTfTargets[keepGene,]
+      curAlpha <- alpha[keepGene,]
+      XNoisy <- XNoisy[keepGene,]
+      keepTF <- colSums(abs(XNoisy)) > 0
+      truthNoisy <- truthNoisy[keepTF,,drop=FALSE]
+      
+      # get true alpha for noisy GRN
+      if(nNoiseTFs > 0){
+        alphaTrueNoisy <- cbind(curAlpha, XNoisy[,(ncol(XAll)+1):(ncol(XAll)+nNoiseTFs)])
+      } else {
+        alphaTrueNoisy <- curAlpha
+      }
+      XNoisy <- XNoisy[,keepTF]
+      alphaTrueNoisy <- alphaTrueNoisy[,keepTF]
+      alphaTrueNoisy[XNoisy == 0] <- 0
+      rownames(truthNoisy) <- colnames(XNoisy)
+      # viper regulon
+      regulonNoisy <- constructViperRegulon(XNoisy, alphaTrueNoisy)
+      # AUCell genesets
+      genesetsNoisy <- constructGenesets(XNoisy, alphaTrueNoisy)
+      
+      qSteps <- 0.05
+      ptGroups <- Hmisc::cut2(pt, cuts = quantile(dataset$experiment$cell_info$sim_time, prob=seq(0,1,by=qSteps)))
+      Xpt <- model.matrix(~0+ptGroups)
+      design <- Xpt
+          
+      
+      res <- evaluateSimulation_repressions(counts = countsAll,
+                                     design = design,
+                                     X = XNoisy,
+                                    alpha = alphaTrueNoisy,
+                                    regulon = regulonNoisy,
+                                    genesets = genesetsNoisy,
+                                    truth = truthNoisy,
+                                    verbose = FALSE,
+                                    alphaScale = 1,
+                                    iterMax = 1000)
+      
+      curDfAUC <- res$dfAUC
+      curDfAUC$noiseEdges <- nNoiseEdges
+      curDfAUC$noiseTFs <- nNoiseTFs
+      curDfAUC$nn <- nn
+      
+      if(!exists("dfAUCAll")){
+        dfAUCAll <- curDfAUC
+      } else {
+        dfAUCAll <- rbind(dfAUCAll, curDfAUC)
+      }
+      
+    }
+  }
+  
+  saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll_dyngen",nn,"_discriminativePrior.rds"))
+}
+
+
+date <- Sys.Date()
+date <- gsub(x=date, pattern="-", replacement="")
+saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll_dyngen",date,"_discriminativePrior.rds"))
+```
+
+```{r}
+for(nn in 1:6){
+  curdfAUC <- readRDS(paste0("../objects/dfAUCAll_dyngen",nn,".rds"))
+  curdfAUC$nn <- nn
+
+  if(nn==1){
+    dfAUCAll <- curdfAUC
+  } else {
+    dfAUCAll <- rbind(dfAUCAll, curdfAUC)
+  }
+}
+```
+
+
+
+```{r}
+# dfAUCAll <- readRDS("../objects/dfAUCAll_dyngen20210502.rds")
+dfAUCAll$method <- factor(dfAUCAll$method, 
+                          levels = c("poisson", "poisson_lasso", "poisson_lasso_repr",
+                                     "dirMult", "dirMult_lasso", "dirMult_lasso_repr",
+                                     "dirMult_alphaEst", "dirMult_lasso_alphaEst", "dirMult_lasso_alphaEst_repr",
+                                      "viper", "AUCell"))
+
+ggplot(dfAUCAll, aes(x=method, y=auc)) +
+  geom_boxplot(aes(col=method)) +
+  facet_wrap(.~noiseTFs * noiseEdges, 
+             ncol = length(nNoiseEdgeGrid), 
+             nrow = length(nNoiseTFGrid)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=4) +
+  xlab("") + ylab("AUC")
+ggsave("../../plots/domino/aucAllSettings_dyngen_discriminativePrior.pdf", width=12, height=9)
+```
+
+

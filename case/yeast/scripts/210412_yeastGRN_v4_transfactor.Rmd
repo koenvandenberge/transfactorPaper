@@ -83,13 +83,13 @@ poisRes_repr <- transfactor::estimateActivity(counts = counts,
                                               verbose = TRUE,
                                               plot = TRUE)
 
-saveRDS(poisRes_repr, file="../data/230613_poisRes_repressions_transfactor.rds")
+saveRDS(poisRes_repr, file="../data/241126_poisRes_repressions_transfactor_domino.rds")
 ```
 
 
 
 ```{r}
-poisRes_repr <- readRDS("../data/230613_poisRes_repressions_transfactor.rds")
+poisRes_repr <- readRDS("../data/241126_poisRes_repressions_transfactor_domino.rds")
 Y_ti <- transfactor::tfCounts(mu_gtc = poisRes_repr$mu_gtc, 
                        counts = counts, 
                        design = design)
@@ -285,7 +285,10 @@ cowplot::plot_grid(plotlist = pListNitro)
 
 ```
 
-# Does estimated TF activity correlate with TF expression?
+
+# Analysis with TF expression instead of TF activity
+
+## Does estimated TF activity correlate with TF expression?
 
 ```{r}
 avTFExpr <- (counts[colnames(X),] %*% design) %*% diag(1/colSums(design))
@@ -294,6 +297,115 @@ plot(x=t(scale(t(avTFExpr))), y=t(scale(t(mu_tc))), pch=16, cex=1/2,
 smoothScatter(x=t(scale(t(avTFExpr))), y=t(scale(t(mu_tc))), pch=16, cex=1/2, 
      col=conditionDesign)
 ```
+
+## Diauxic shift
+
+```{r}
+### paper https://www.mcponline.org/action/showPdf?pii=S1535-9476%2820%2932651-7
+# induced TFs: HAP2/3/4, CAT8, BAS1, MSN2/4, FHL1, RAP1.
+paperTFs <- c("HAP2", "HAP3", "HAP4", "CAT8", "BAS1", "MSN2", "MSN4", "FHL1", "RAP1")
+all(paperTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+paperTFGRN <- tfGRN[tfGRN$name %in% paperTFs,]
+rownames(paperTFGRN) <- paperTFGRN$name
+paperTFGRN <- paperTFGRN[paperTFs,]
+paperTFGRN$type <- c(rep("up", 7), rep("down", 2))
+all(paperTFs %in% tfGRN$name)
+
+# late-induced proteins: HAP2/3/4, CAT8: Limited activity for HAPs, high for CAT8.
+# early-induced proteins: BAS1, MSN2, MSN4: Only for MSN4 evidence.
+# FHL1 and RAP1 are repressed after a while and we find no activity of these.
+
+dataMatrix <- data.matrix(data)
+dataMean <- solve(t(design) %*% design) %*% t(design) %*% dataMatrix
+
+diauxicColumns <- grep(x = colnames(design),
+                       pattern = "YPDDiauxic")
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+pListDiaux_exp <- list()
+for(kk in 1:nrow(paperTFGRN)){
+  curTF <- paperTFGRN$sys[kk]
+  ypd <- dataMean[ypdColumns, curTF]
+  diaux <- dataMean[diauxicColumns, curTF]
+  df <- data.frame(expression = c(ypd, diaux),
+                   condition = factor(rep(c("YPD", "Diaux"), each=length(ypd), levels=c("YPD", "Diaux"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 2)))
+  p <- ggplot(df, aes(x=condition, y=expression, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(paste0(paperTFGRN$name[kk], " (",paperTFGRN$type[kk],")")) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF expression", 
+                       breaks = signif(c(min(df$expression), max(df$expression)), 2), 
+                       labels = signif(c(min(df$expression), max(df$expression)), 2)) +
+    scale_x_discrete(limits=c("YPD", "Diaux"))
+  #print(p)
+  pListDiaux_exp[[kk]] <- p
+}
+cowplot::plot_grid(plotlist = pListDiaux_exp)
+ggsave("../plots/241127_diauxic_tfExpression.pdf", width=8, height=7)
+```
+
+
+## Nitrogen limitation and the TOR signaling pathway
+
+```{r}
+## line plots
+nitroTFs <- c("GAT1", "GLN3", "RTG1", "RTG3")
+all(nitroTFs %in% mapID$Name)
+tfGRN <- data.frame(sys=colnames(X), 
+                    name=mapID$Name[match(colnames(X), mapID$SystematicName)])
+nitroTFGRN <- tfGRN[tfGRN$name %in% nitroTFs,]
+rownames(nitroTFGRN) <- nitroTFGRN$name
+nitroTFGRN <- nitroTFGRN[nitroTFs,]
+all(nitroTFs %in% nitroTFGRN$name)
+
+
+ypdColumns <- grep(x = colnames(design),
+                       pattern = "YPD$")
+nitroColumns <- grep(x = colnames(design),
+                       pattern = "NLIM_")
+pListNitro_exp <- list()
+for(kk in 1:nrow(nitroTFGRN)){
+  curTF <- nitroTFGRN$sys[kk]
+  ypd <- dataMean[ypdColumns, curTF]
+  nitro <- dataMean[nitroColumns, curTF]
+  df <- data.frame(expression = c(ypd, nitro),
+                   condition = factor(rep(c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"), each=length(ypd), levels=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA"))),
+                   genotype = factor(rep(1:nlevels(factor(genotype)), 5)))
+  p <- ggplot(df, aes(x=condition, y=expression, group=genotype, col=genotype)) +
+    geom_point() +
+    geom_line() + 
+    ggtitle(nitroTFGRN$name[kk]) +
+    theme_classic() +
+    theme(legend.position = "none") +
+    xlab(NULL) +
+    scale_y_continuous(name = "TF expression", 
+                       breaks = signif(c(min(df$expression), max(df$expression)), 2), 
+                       labels = signif(c(min(df$expression), max(df$expression)), 2)) +
+    scale_x_discrete(limits=c("YPD", "NLIM_GLN", "NLIM_NH4", "NLIM_PRO", "NLIM_UREA")) +
+    theme(axis.text.x = element_text(angle = 30, vjust= 0.7, size=9))
+  #print(p)
+  pListNitro_exp[[kk]] <- p
+}
+cowplot::plot_grid(plotlist = pListNitro_exp)
+ggsave("../plots/241127_nitrogen_tfExpression.pdf", width=8, height=7)
+```
+
+
+### Combined plot
+
+```{r}
+pDi <- cowplot::plot_grid(plotlist = pListDiaux_exp)
+pNi <- cowplot::plot_grid(plotlist = pListNitro_exp)
+cowplot::plot_grid(pDi, pNi, labels=c("a","b"), nrow=2)
+ggsave("../plots/241127_TfExpression_composite.pdf", width=8, height=10)
+```
+
 
 
 # Unsupervised TF activity estimation
@@ -325,7 +437,7 @@ poisRes_repr_design10 <- transfactor::estimateActivity(counts = counts,
                                                    sparse = FALSE,
                                                    repressions = TRUE)
 # converged after iteration 90. Log-lik: -94708908.558
-saveRDS(poisRes_repr_design10, file="../data/230613_poisRes_repr_design10Cells.rds")
+saveRDS(poisRes_repr_design10, file="../data/241126_poisRes_repr_design10Cells_domino.rds")
 ```
 
 
@@ -398,7 +510,7 @@ resAUCell <- resAUCell[colnames(X),]
 ## Dimensionality reduction
 
 ```{r}
-poisRes_repr_design10 <- readRDS("../data/230613_poisRes_repr_design10Cells.rds")
+poisRes_repr_design10 <- readRDS("../data/241126_poisRes_repr_design10Cells_domino.rds")
 library(scater)
 set.seed(44)
 pcViper <- scater::calculatePCA(x = viperRes,
@@ -438,6 +550,37 @@ plotUMAP <- function(dr, group, main=NULL){
     ggtitle(main)
 }
 
+# Return legend for one plot
+.get_legend <- function(p, position = NULL){
+
+  if(is.null(p)) return(NULL)
+  if(!is.null(position)){
+    p <- p + theme(legend.position = position)
+  }
+  tmp <- ggplot_gtable(ggplot_build(p))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  if(length(leg) > 0) leg <- tmp$grobs[[leg]]
+  else leg <- NULL
+  leg
+}
+
+getLegend <- function(dr, group, main=NULL){
+  pal <- wesanderson::wes_palette("Darjeeling1", n=nlevels(cond10), type="continuous")
+  df <- data.frame(UMAP1=dr[,1],
+                   UMAP2=dr[,2],
+                   group=group)
+  tmpPlot <- ggplot(df, aes(x=UMAP1, y=UMAP2, color=group)) + 
+    geom_point(size=.2) +
+    scale_color_manual(values=pal) +
+    theme_classic() +
+    ggtitle(main) +
+    guides(color=guide_legend(nrow=3, ncol=5,
+                              title = "condition", 
+                              override.aes = list(size=3)))
+  leg <- .get_legend(tmpPlot)
+  return(leg)
+}
+
 cond10 <- factor(gsub(x=unlist(lapply(strsplit(colnames(design10), split=","), "[[", 2)),
      pattern="[0-9]+",
      replacement=""))
@@ -447,6 +590,7 @@ pViper <- plotUMAP(umapViper, cond10, main="viper")
 pAUCell <- plotUMAP(umapAUCell, cond10, main="AUCell")
 pTransfactor <- plotUMAP(umapPois, cond10, main="transfactor")
 pOrig <- plotUMAP(umapOrig, condition, main="original counts")
+leg <- getLegend(umapPois, cond10)
 pDR <- cowplot::plot_grid(pOrig10, pViper, pAUCell, pTransfactor)
 pDR
 ## Graph-based clustering to compare 
@@ -474,11 +618,16 @@ pHeat <- pheatmap(mu_tc_scaled,
 pDiaux <- cowplot::plot_grid(plotlist = pListDiaux)
 pNitro <- cowplot::plot_grid(plotlist = pListNitro)
 
+pDRLeg <- cowplot::plot_grid(pDR, leg, nrow=2, ncol=1, rel_heights=c(0.9,0.2))
+
 saveRDS(pHeat, file="../plots/pHeatTFAct_copyReproduc.rds")
 saveRDS(pDiaux, file="../plots/pDiaux_copyReproduc.rds")
 saveRDS(pNitro, file="../plots/pNitro_copyReproduc.rds")
 saveRDS(pDR, file="../plots/pDR_copyReproduc.rds")
+saveRDS(pDRLeg, file="../plots/pDRLeg_copyReproduc.rds")
 
-cowplot::plot_grid(pHeat[[4]], pDiaux, pNitro, pDR, labels=letters[1:4])
+cowplot::plot_grid(pHeat[[4]], pDiaux, pNitro, pDRLeg, labels=letters[1:4])
 ggsave("../plots/compositeFigure_copyReproduc.pdf", width=12, height=12)
 ```
+
+

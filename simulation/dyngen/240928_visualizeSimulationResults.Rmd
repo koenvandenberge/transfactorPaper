@@ -1,0 +1,141 @@
+---
+title: "Visualize dyngen simulation results"
+author: "Koen Van den Berge"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+date: "2024-09-28"
+---
+
+```{r}
+library(ggplot2)
+nNoiseTFGrid <- c(0, 131, 262, 524)
+nNoiseEdgeGrid <- round(c(-954.50, -477.25, 0, 3818, 7636),0)
+```
+
+
+
+# Main dyngen simulation results
+
+```{r}
+for(nn in 1:6){
+  curdfAUC <- readRDS(paste0("../objects/dfAUCAll_dyngen",nn,".rds"))
+  curdfAUC$nn <- nn
+
+  if(nn==1){
+    dfAUCAll <- curdfAUC
+  } else {
+    dfAUCAll <- rbind(dfAUCAll, curdfAUC)
+  }
+}
+dfAUCAll$method[dfAUCAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst_repr"] <- "dirMultEBayes_lasso_repr"
+dfAUCAll$method <- factor(dfAUCAll$method, 
+                          levels = c("poisson", "poisson_lasso", "poisson_lasso_repr",
+                                     "dirMult", "dirMult_lasso", "dirMult_lasso_repr",
+                                     "dirMultEBayes", "dirMultEBayes_lasso", "dirMultEBayes_lasso_repr",
+                                      "viper", "AUCell"))
+dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
+dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
+
+
+ggplot(dfAUCAll, aes(x=method, y=auc)) +
+  geom_boxplot(aes(col=method)) +
+  facet_wrap(.~noiseTFs * noiseEdges, 
+             ncol = length(nNoiseEdgeGrid), 
+             nrow = length(nNoiseTFGrid)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=4) +
+  xlab("") + ylab("AUC")
+ggsave("../../plots/domino/aucAllSettings_dyngen.pdf", width=12, height=9)
+```
+
+
+# Using a discriminative prior
+
+```{r}
+fileList <- list.files(path="../objects/", pattern="_discriminativePrior.rds$",
+                      full.names=TRUE)
+
+for(ff in 1:length(fileList)){
+  curdfAUC <- readRDS(fileList[ff])
+  curdfAUC$nn <- nn
+
+  if(nn==1){
+    dfAUCAll <- curdfAUC
+  } else {
+    dfAUCAll <- rbind(dfAUCAll, curdfAUC)
+  }
+}
+
+dfAUCAll$method[dfAUCAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst_repr"] <- "dirMultEBayes_lasso_repr"
+dfAUCAll$method <- factor(dfAUCAll$method, 
+                          levels = c("poisson", "poisson_lasso", "poisson_lasso_repr",
+                                     "dirMult", "dirMult_lasso", "dirMult_lasso_repr",
+                                     "dirMultEBayes", "dirMultEBayes_lasso", "dirMultEBayes_lasso_repr",
+                                      "viper", "AUCell"))
+dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
+dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
+
+
+ggplot(dfAUCAll, aes(x=method, y=auc)) +
+  geom_boxplot(aes(col=method)) +
+  facet_wrap(.~noiseTFs * noiseEdges, 
+             ncol = length(nNoiseEdgeGrid), 
+             nrow = length(nNoiseTFGrid)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=4) +
+  xlab("") + ylab("AUC")
+ggsave("../../plots/domino/aucAllSettings_dyngen_discriminativePrior.pdf", width=12, height=9)
+```
+
+
+# Using limma downstream for DE
+
+```{r}
+fileList <- list.files(path="../objects", pattern="^dfAUCAll_dyngen[1-6]_allLimma.rds$",
+                      full.names=TRUE)
+
+for(ff in 1:length(fileList)){
+  curdfAUC <- readRDS(fileList[ff])
+  curdfAUC$nn <- nn
+
+  if(nn==1){
+    dfAUCAll <- curdfAUC
+  } else {
+    dfAUCAll <- rbind(dfAUCAll, curdfAUC)
+  }
+}
+
+dfAUCAll$method[dfAUCAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst_repr"] <- "dirMultEBayes_lasso_repr"
+dfAUCAll$method <- factor(dfAUCAll$method, 
+                          levels = c("poisson", "poisson_lasso", "poisson_lasso_repr",
+                                     "dirMult", "dirMult_lasso", "dirMult_lasso_repr",
+                                     "dirMultEBayes", "dirMultEBayes_lasso", "dirMultEBayes_lasso_repr",
+                                      "viper", "AUCell"))
+dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
+dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
+
+
+ggplot(dfAUCAll, aes(x=method, y=auc)) +
+  geom_boxplot(aes(col=method)) +
+  facet_wrap(.~noiseTFs * noiseEdges, 
+             ncol = length(nNoiseEdgeGrid), 
+             nrow = length(nNoiseTFGrid)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_y_continuous(n.breaks=4) +
+  xlab("") + ylab("AUC")
+ggsave("../../plots/domino/aucAllSettings_dyngen_allLimma.pdf", width=12, height=9)
+```

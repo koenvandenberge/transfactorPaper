@@ -636,13 +636,15 @@ pMethodMAList
 ### MSE
 
 ```{r}
-# mseListAll <- readRDS("../objects/mseListAll20230407.rds")
-mseListAll <- readRDS(paste0("../objects/mseListAll",date,".rds"))
+mseListAll <- readRDS("../objects/mseListAll20241003.rds")
+# mseListAll <- readRDS(paste0("../objects/mseListAll",date,".rds"))
 
 dfMSEAll <- do.call(rbind, mseListAll)
+dfMSEAll$method[dfMSEAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfMSEAll$method[dfMSEAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
 dfMSEAll$method <- factor(dfMSEAll$method, levels = c("poisson", "poisson_lasso",
                                                       "dirMult", "dirMult_lasso",
-                                                      "dirMult_alphaEst", "dirMult_lasso_alphaEst"))
+                                                      "dirMultEBayes", "dirMultEBayes_lasso"))
 dfMSEAll$noiseEdges <- round(dfMSEAll$nNoiseEdge)
 dfMSEAll$noiseTFs <- round(dfMSEAll$nNoiseTF)
 dfMSEAll_allEdges <- dfMSEAll[dfMSEAll$onlyTrue==FALSE,]
@@ -658,7 +660,7 @@ ggplot(dfMSEAll_allEdges, aes(x=method, y=mse)) +
   xlab("") + ylab("MSE") +
   ylim(c(0,4.5)) +
   geom_hline(yintercept=0, lty=2)
-ggsave("../plots/mseAllSettings.pdf", width=12, height=9)
+ggsave("../../plots/domino/mseAllSettings.pdf", width=12, height=9)
 
 
 

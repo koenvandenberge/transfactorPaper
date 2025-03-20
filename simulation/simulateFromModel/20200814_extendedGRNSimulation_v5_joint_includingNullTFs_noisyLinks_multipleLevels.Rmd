@@ -252,7 +252,7 @@ source('20201120_evaluateSimulatedDataset.R')
 
 ## ROC for one dataset
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 nNoiseTFGrid <- c(0, ncol(X), ncol(X)*2, ncol(X)*4) # 100% to 33.3% data-generating TFs
 nNoiseEdgeGrid <- c(-sum(X)/2, -sum(X)/4, 0, sum(X)*2, sum(X)*4) # -50% to +200% true links
 # nNoiseTFGrid <- c(ncol(X)*2, ncol(X)*4) # 100% to 33.3% data-generating TFs
@@ -320,13 +320,13 @@ leg <- cowplot::get_legend(simEvalNoise$pAll)
 cowplot::plot_grid(pAllSettings, leg, nrow=1, rel_widths=c(1, .2))
 date <- Sys.Date()
 date <- gsub(x=date, pattern="-", replacement="")
-ggsave(paste0("../plots/",date,"rocModelAllSettings.pdf"), width=12, height=12)
+ggsave(paste0("../../plots/domino/",date,"rocModelAllSettings.pdf"), width=12, height=12)
 
 ```
 
 ## AUROC for 6 datasets in each setting.
 
-```{r}
+```{r, message=FALSE, warning=FALSE}
 nNoiseTFGrid <- c(0, ncol(X), ncol(X)*2, ncol(X)*4) # 100% to 33.3% data-generating TFs
 nNoiseEdgeGrid <- c(-sum(X)/2, -sum(X)/4, 0, sum(X)*2, sum(X)*4) # -50% to +200% true links
 nIter <- 6
@@ -411,11 +411,12 @@ for(nnTF in 1:length(nNoiseTFGrid)){
 date <- Sys.Date()
 date <- gsub(x=date, pattern="-", replacement="")
 saveRDS(dfAUCAll, file=paste0("../objects/dfAUCAll",date,".rds"))
-# dfAUCAll <- readRDS("../objects/dfAUCAll20230503.rds")
-# date <- 20230503
+# dfAUCAll <- readRDS("../objects/dfAUCAll20240906.rds")
+dfAUCAll$method[dfAUCAll$method == "dirMult_alphaEst"] <- "dirMultEBayes"
+dfAUCAll$method[dfAUCAll$method == "dirMult_lasso_alphaEst"] <- "dirMultEBayes_lasso"
 dfAUCAll$method <- factor(dfAUCAll$method, levels = c("poisson", "poisson_lasso",
                                                       "dirMult", "dirMult_lasso",
-                                                      "dirMult_alphaEst", "dirMult_lasso_alphaEst",
+                                                      "dirMultEBayes", "dirMultEBayes_lasso",
                                                       "viper", "AUCell"))
 dfAUCAll$noiseEdges <- round(dfAUCAll$noiseEdges)
 dfAUCAll$noiseTFs <- round(dfAUCAll$noiseTFs)
@@ -430,5 +431,5 @@ ggplot(dfAUCAll, aes(x=method, y=auc)) +
   scale_y_continuous(n.breaks=3) +
   xlab("") + ylab("AUC")
 # ggsave("../plots/aucAllSettings.pdf", width=12, height=9)
-ggsave(paste0("../plots/",date,"aucAllSettings.pdf"), width=12, height=9)
+ggsave(paste0("../../plots/domino/",date,"aucAllSettings.pdf"), width=12, height=9)
 ```
