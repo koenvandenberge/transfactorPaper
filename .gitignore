@@ -1,3 +1,4 @@
+.ssh*
 domino.Rhistory
 case/yeast/data/241126_poisRes_repressions_transfactor_domino.rds
 case/yeast/data/241126_poisRes_repr_design10Cells_domino.rds
